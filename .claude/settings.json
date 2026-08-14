@@ -1,0 +1,34 @@
+{
+    "permissions": {
+        "allow": [
+            "Bash(npm install)",
+            "Bash(npm install *)",
+            "Bash(npm install --package-lock-only)",
+            "Bash(npm run dev)",
+            "Bash(npm run build)",
+            "Bash(npm run preview)",
+            "Bash(npm run typecheck)",
+            "Bash(npm run lint)",
+            "Bash(npm run lint:fix)",
+            "Bash(npm run format)",
+            "Bash(npm run test)",
+            "Bash(npm run test:watch)",
+            "Bash(npm run test:e2e)",
+            "Bash(npx tsc --noEmit)",
+            "Bash(npx tsc --noEmit *)",
+            "Bash(npx vitest run)",
+            "Bash(npx vitest run *)",
+            "Bash(npx playwright test)",
+            "Bash(npx playwright test *)",
+            "Bash(npx playwright install *)",
+            "Bash(git status)",
+            "Bash(git status *)",
+            "Bash(git diff)",
+            "Bash(git diff *)",
+            "Bash(git log)",
+            "Bash(git log *)",
+            "Bash(git show)",
+            "Bash(git show *)"
+        ]
+    }
+}

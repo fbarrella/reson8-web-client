@@ -1,0 +1,43 @@
+================================================================================
+  RESON8 WEB CLIENT — Development Progress Log
+================================================================================
+
+PROJECT OVERVIEW
+================
+Reson8 Web Client is a mobile-first, fully responsive Progressive Web App
+client for Reson8 (a self-hosted voice & text communication server). Built
+with React + TypeScript + Vite. It is an independent client for the existing
+`reson8` server — see CLAUDE.md for the frozen wire-protocol reference and
+../reson8/ for the server/desktop-client project this one targets (read-only
+reference, never a dependency to build against directly).
+
+The authoritative scope document is app-planning/00-master-prd.md and the
+phase PRDs (app-planning/01 through 07-phase*.md) — read those before
+assuming a feature is in/out of scope for a given phase.
+
+Tech Stack: React + TypeScript + Vite, Zustand, Tailwind CSS + shadcn/ui
+(Radix), socket.io-client, mediasoup-client, vite-plugin-pwa.
+
+Current status: planning complete (master PRD + 7 phase PRDs), no
+application code written yet. Phase 1 (foundation, connection, PWA shell)
+is next.
+
+
+================================================================================
+  ONGOING LOG — new entries go below this line
+================================================================================
+
+Use `/log-progress` (see .claude/commands/log-progress.md) to append entries
+here in the established format:
+
+--- Entry: DD/MM/YYYY ---
+
+Feature/Fix: <name>
+
+  Problem: ...
+  Solution: ...
+  Key Files Modified:
+    ...
+  Verification:
+    ...
+  Next Step: ...
