@@ -629,3 +629,591 @@ Feature/Fix: Phase 1 acceptance criteria verification
   (mediasoup voice core).
 
 === Version bumped to 1.0.0 (15/08/2026) — classification: MAJOR ===
+
+--- Entry: 15/08/2026 ---
+
+Feature/Fix: Phase 2 — P2.1: voiceService architecture
+
+  Problem: Phase 2 needs a client-side mediasoup engine to drive the SFU
+  voice handshake, but it must stay framework-agnostic so it's independently
+  testable and so the desktop client's Phase 11 reconnection logic ports
+  with only browser-API substitutions, not a redesign (Phase 2 PRD P2.1).
+
+  Solution: Added `src/services/voiceService.ts` — a plain TS class
+  (`VoiceService`) holding a mediasoup-client `Device`, send/recv
+  `Transport`s, the active `Producer`, a `Map` of `Consumer`s keyed by
+  consumer id, and a `Map` of DOM `<audio>` elements keyed by consumer id.
+  Takes a narrow `VoiceSignaling` interface in its constructor (six
+  promise-returning methods matching the wire protocol's voice events 1:1)
+  instead of importing `socketService` directly, so it can be unit-tested
+  with a fake signaling object. Exposes `onConnectionLost`/`onError`
+  callback properties (event-emitter-style, not React-coupled) that
+  `voiceConnectionService` wires up.
+
+  Key Files Modified:
+    src/services/voiceService.ts (NEW)
+
+  Verification:
+    npm run typecheck / lint pass. Covered indirectly by every later P2.x
+    item's verification below; the mute/deafen state machine specifically
+    got direct unit tests (see the P2.5 entry).
+
+  Next Step: P2.2 — wire the six-step handshake through voiceService.
+
+--- Entry: 15/08/2026 ---
+
+Feature/Fix: Phase 2 — P2.2: Voice handshake (6-step)
+
+  Problem: Joining a voice channel requires driving mediasoup-client through
+  a specific six-step sequence against the server's ack-based Socket.io
+  events: GET_ROUTER_CAPABILITIES -> CREATE_WEBRTC_TRANSPORT (x2, send +
+  recv) -> CONNECT_TRANSPORT -> PRODUCE -> CONSUME -> RESUME_CONSUMER.
+
+  Solution: `socketService.ts` gained six promise-wrapped methods
+  (`getRouterCapabilities`, `createWebRtcTransport`, `connectTransport`,
+  `produce`, `consume`, `resumeConsumer`) satisfying `VoiceSignaling`.
+  `VoiceService.joinVoiceChannel()` drives steps 1-4 in order
+  (getRouterCapabilities -> device.load() -> createSendTransport ->
+  createRecvTransport -> startProducing, which itself does getUserMedia +
+  produce). `consumeProducer()` (called per remote producer, not part of
+  the initial join) drives CONSUME + RESUME_CONSUMER for steps 5-6.
+  Producers that arrive before the recv transport is ready are queued in
+  `pendingProducers` and flushed once it's up.
+
+  A generic type helper (`AckPayload<Ev>`) in socketService.ts extracts the
+  ack callback's resolved type from the vendored `ClientToServerEvents`
+  signatures for CREATE_WEBRTC_TRANSPORT/CONSUME; a naive variadic-tuple
+  version resolved to `never` for these two-argument event signatures, so
+  it uses an explicit two-branch conditional type with a `payload: never`
+  contravariant-parameter trick instead.
+
+  Key Files Modified:
+    src/services/socketService.ts
+    src/services/voiceService.ts
+
+  Verification:
+    npm run typecheck / lint pass. End-to-end handshake verified against a
+    stub mock server extended specifically for this (see the final
+    acceptance entry for full detail and honest caveats — no real
+    reson8/mediasoup server was available in this sandbox).
+
+  Next Step: P2.3 — getUserMedia & permission UX.
+
+--- Entry: 15/08/2026 ---
+
+Feature/Fix: Phase 2 — P2.3: getUserMedia & permission UX
+
+  Problem: Unlike Electron's auto-grant, every browser shows a real,
+  per-origin mic permission prompt, and a denial needs a clear,
+  non-dead-end recovery path (master PRD's platform-limitations table).
+
+  Solution: `VoiceService.startProducing()` calls `getUserMedia` only in
+  direct response to the join gesture (never speculatively), with
+  echoCancellation/noiseSuppression/autoGainControl constraints and an
+  optional exact deviceId. `voiceConnectionService.joinVoiceChannel()`
+  catches the rejection and classifies it: `err instanceof DOMException &&
+  (err.name === "NotAllowedError" || err.name === "PermissionDeniedError")`
+  sets `permissionDenied: true` on the returned result, distinct from any
+  other join failure. `src/features/voice/MicPermissionDeniedPanel.tsx`
+  (NEW) renders a denial-specific recovery UI: a platform-detected
+  guidance string (iOS Safari / Android / Firefox / generic, via user-agent
+  sniffing) plus a "Try again" button that re-invokes the join. Wired into
+  both `VoicePanel` (persistent lg: pane / mobile sheet) and surfaced via
+  `useJoinVoice` (NEW hook) so `ChannelTreePanel`'s voice row tap also
+  shows it.
+
+  Key Files Modified:
+    src/services/voiceConnectionService.ts
+    src/features/voice/MicPermissionDeniedPanel.tsx (NEW)
+    src/hooks/useJoinVoice.ts (NEW)
+    src/features/voice/VoicePanel.tsx
+    src/features/channels/ChannelTreePanel.tsx
+
+  Verification:
+    npm run typecheck / lint pass. The `permissionDenied` classification
+    branch itself is covered by a deterministic unit test in
+    src/services/voiceConnectionService.test.ts (feeds a real
+    `NotAllowedError`/`PermissionDeniedError` DOMException through the
+    catch block and asserts the flag) rather than a live E2E denial click —
+    reproducing the exact DOMException name a real browser's permission
+    prompt produces was unreliable in this sandbox's headless Chromium
+    (see the final acceptance entry for detail). Live E2E did confirm the
+    general failure path (any getUserMedia rejection) surfaces a graceful
+    "Couldn't join voice" toast with no crash and a recoverable idle state.
+
+  Next Step: P2.4 — audio playback.
+
+--- Entry: 15/08/2026 ---
+
+Feature/Fix: Phase 2 — P2.4: Audio playback (DOM-attached audio elements)
+
+  Problem: A detached `new Audio()` produces no sound for a consumed
+  mediasoup track — bit the desktop client once — and mobile Safari's
+  autoplay/media-element policies are stricter still, so this matters more
+  for a web client, not less (CLAUDE.md conventions section).
+
+  Solution: `VoiceService.consumeProducer()` creates the audio element via
+  `document.createElement("audio")`, sets `srcObject` to a `MediaStream`
+  wrapping the consumer's track, sets `autoplay = true`, and appends it to
+  `document.body` before calling `.play()` (wrapped in a no-op `.catch()`
+  since autoplay can still be rejected post-gesture on some browsers, not
+  independently user-actionable beyond retrying the join). Tracked in the
+  `audioElements` Map keyed by consumer id so `removeConsumer()` and
+  `cleanup()` can pause/detach/`remove()` them, and so `toggleDeafen()` can
+  mute/unmute every live element in one pass.
+
+  Key Files Modified:
+    src/services/voiceService.ts
+
+  Verification:
+    npm run typecheck / lint pass. Confirmed via code review + the DOM
+    presence of appended `<audio>` elements during the E2E connected-state
+    pass (see final acceptance entry) that the element-creation/attachment
+    path executes; actual audible playback could not be verified — headless
+    sandbox, no real remote producer/audio track since the stub mock server
+    has no real SFU.
+
+  Next Step: P2.5 — mute/deafen state machine.
+
+--- Entry: 15/08/2026 ---
+
+Feature/Fix: Phase 2 — P2.5: Mute/Deafen accumulation state machine
+
+  Problem: The desktop client's mute/deafen interaction has a real, subtle
+  discrepancy between its own Phase 10 PRD text (which says Mute should be
+  a no-op while deafened) and its actual shipped `renderer.ts` behavior
+  (which auto-undeafens first, then applies a toggle on top). Porting "the
+  exact state machine" means porting the shipped code, not the PRD's stated
+  intent — confirmed via a targeted extraction pass against the desktop
+  repo before implementing this item.
+
+  Solution: Split the state machine across two layers matching the
+  existing service/orchestration split:
+  - `VoiceService.toggleDeafen()` (mode-agnostic): deafening auto-mutes the
+    producer and sets `_deafenAutoMuted = true` only if the producer wasn't
+    already paused; undeafening restores exactly that remembered state
+    (resumes only if `_deafenAutoMuted`) and always unmutes every attached
+    audio element. `toggleMute()`/`setMuted()` are no-ops while deafened.
+  - `voiceConnectionService.toggleMute()` (mode-aware): if currently
+    deafened, auto-undeafens via `voiceService.toggleDeafen()` first, then
+    applies a toggle on top of the *resolved* mute state from that
+    call — not a no-op, matching the desktop's real behavior rather than
+    its PRD text (documented in both files' doc comments so the
+    discrepancy doesn't get "fixed" back to the PRD's stated intent later).
+
+  Key Files Modified:
+    src/services/voiceService.ts
+    src/services/voiceConnectionService.ts
+
+  Verification:
+    npm run typecheck / lint pass. Added
+    src/services/voiceService.test.ts (9 unit tests) — injects a fake
+    producer object via the class's private field to drive the matrix
+    directly without a real mediasoup handshake: toggleMute pause/resume in
+    both directions, no-op while deafened (both toggleMute and setMuted),
+    deafen-while-unmuted auto-mutes, deafen-while-already-muted leaves the
+    producer alone AND undeafen does not incorrectly auto-unmute it,
+    undeafen-after-auto-mute correctly restores unmuted, audio-element
+    mute/unmute on deafen toggle, and toggleMute/setMuted never throw
+    before a producer exists. Added 5 more scenario tests in
+    src/services/voiceConnectionService.test.ts specifically for the
+    click-Mute-while-deafened auto-undeafen-then-toggle branch. All pass.
+    Also confirmed live end-to-end against the connected stub-server state
+    (see final acceptance entry): Mute -> Unmute, Deafen -> Undeafen, and
+    Deafen-then-Undeafen-restores-still-muted all reproduced through real
+    UI clicks against a real mediasoup-client Producer object.
+
+  Next Step: P2.6 — PTT vs Voice Activation.
+
+--- Entry: 15/08/2026 ---
+
+Feature/Fix: Phase 2 — P2.6: Push-to-Talk vs Voice Activation
+
+  Problem: Need both a default "always transmitting unless muted" mode and
+  an opt-in PTT mode, with PTT's press/release semantics kept independent
+  of the persistent Mute button's "locked" state — conflating the two would
+  make the Mute button unpredictable while a PTT key is being held.
+
+  Solution: `voiceStore.pttMode: boolean` persisted to
+  `localStorage['reson8-ptt-mode']`. In PTT mode, the store's `isMuted`
+  flag is repurposed as a "locked" flag toggled only by the Mute
+  button/shortcut — NOT the live transmit state.
+  `voiceConnectionService.pttPress()`/`pttRelease()` call
+  `voiceService.setMuted(false/true)` directly, bypassing the lock flag
+  entirely, and are no-ops if PTT mode is off, not connected, locked, or
+  deafened. `applyInitialMuteState()` sets the resting state to
+  transmit-blocked on join in PTT mode while keeping the store's `isMuted`
+  (lock) false so the UI shows the mic as available. `PttButton.tsx` (NEW)
+  is a press-and-hold on-screen button (pointer down/up + pointerleave/
+  cancel handling) — the primary PTT affordance on mobile, since there is
+  no OS-level global hotkey on the web (master PRD platform-limitations
+  table); a focused-tab keydown/keyup listener via
+  `voiceShortcutService.ts` (NEW) covers desktop keyboard PTT.
+
+  Key Files Modified:
+    src/stores/voiceStore.ts
+    src/services/voiceConnectionService.ts
+    src/features/voice/PttButton.tsx (NEW)
+    src/lib/keyboardShortcut.ts (NEW)
+    src/stores/shortcutStore.ts (NEW)
+    src/services/voiceShortcutService.ts (NEW)
+    src/main.tsx — attachVoiceShortcutListeners() wired in
+
+  Verification:
+    npm run typecheck / lint pass. voiceConnectionService.test.ts covers:
+    Mute-click toggles the lock flag without calling voiceService.toggleMute
+    in PTT mode; unlocking does not itself resume transmission; pttPress
+    transmits only when PTT mode + connected + unlocked + not deafened;
+    pttPress/pttRelease no-ops for each of those gating conditions. Live
+    E2E confirmed the Settings tab's PTT/Voice-Activation toggle buttons
+    render and the active-variant styling flips on click.
+
+  Next Step: P2.7 — device selection.
+
+--- Entry: 15/08/2026 ---
+
+Feature/Fix: Phase 2 — P2.7: Audio device selection
+
+  Problem: Users need to pick a specific mic/speaker, with graceful
+  handling of `setSinkId`'s Chromium-only support and the browser privacy
+  behavior where device *labels* stay blank until a permission grant has
+  occurred at least once for the origin.
+
+  Solution: `src/lib/audioDevices.ts` (NEW):
+  `enumerateAudioDevices()` (falls back to "Microphone N"/"Speaker N"
+  placeholders when labels are empty), `supportsOutputDeviceSelection()`
+  (feature-detects `"setSinkId" in HTMLMediaElement.prototype`), and
+  `applyOutputDeviceToLiveAudioElements()` (calls `setSinkId` on every
+  currently-mounted `<audio>` element, silently ignored where unsupported).
+  `voiceStore` gained `selectedInputDeviceId`/`selectedOutputDeviceId`
+  (persisted to `reson8-audio-input`/`reson8-audio-output`) plus staged
+  variants + `applyStagedDevices()` so device changes in Settings require
+  an explicit Save rather than applying live mid-selection. Input device
+  changes apply "next time you join voice" (copy in the UI); output device
+  changes apply live via `applyOutputDeviceToLiveAudioElements()`.
+
+  Key Files Modified:
+    src/lib/audioDevices.ts (NEW)
+    src/stores/voiceStore.ts
+    src/features/settings/VoiceShortcutsTab.tsx (NEW, device section)
+
+  Edge Cases Handled:
+    Speaker selection unsupported (Safari/Firefox) -> explanatory text
+    instead of a non-functional dropdown, rather than hiding the section.
+
+  Verification:
+    npm run typecheck / lint pass. Live E2E confirmed the microphone
+    device `<select>` renders in Settings -> Voice & Shortcuts. Output
+    `setSinkId` behavior could not be exercised live (headless sandbox, no
+    real audio output devices to enumerate/select between).
+
+  Next Step: P2.8 — Active Speaker Indicator.
+
+--- Entry: 15/08/2026 ---
+
+Feature/Fix: Phase 2 — P2.8: Active Speaker Indicator
+
+  Problem: Occupants need a visual cue for who's currently talking, driven
+  by the server's ACTIVE_SPEAKERS broadcast.
+
+  Solution: `voiceStore.activeSpeakerUserIds: Set<string>`, updated by
+  `voiceConnectionService.handleActiveSpeakers` (ignores payloads for a
+  channel other than the one currently joined). `VoicePanel`'s occupant
+  list and `ChannelTreePanel`'s voice-row occupant chips both render a ring
+  halo (`ring-2 ring-success`) around a speaking occupant's avatar.
+
+  Key Files Modified:
+    src/stores/voiceStore.ts
+    src/services/voiceConnectionService.ts
+    src/features/voice/VoicePanel.tsx
+    src/features/channels/ChannelTreePanel.tsx
+
+  Verification:
+    npm run typecheck / lint pass. Not exercised live — the stub mock
+    server never emits ACTIVE_SPEAKERS (no real SFU-side audio-level
+    detection to drive it); verified by code review that the halo class is
+    conditional on store membership and the handler correctly filters by
+    channel.
+
+  Next Step: P2.9 — session timer.
+
+--- Entry: 15/08/2026 ---
+
+Feature/Fix: Phase 2 — P2.9: Voice session timer
+
+  Problem: Need a flicker-free MM:SS session timer sourced from the
+  server's `sessionStartedAt` (not client-side join time, so it stays
+  correct across a reconnect) that never shows a negative duration.
+
+  Solution: `src/lib/sessionTimer.ts` (NEW) computes the formatted duration
+  directly from `sessionStartedAt` and clamps at "00:00" if the computed
+  delta is negative (clock skew). `src/hooks/useSessionTimer.ts` (NEW)
+  forces a re-render once a second via `useReducer` rather than staging the
+  formatted string in `useState` — computing the display value directly in
+  the render body avoids a one-tick-stale flicker that a staged-state
+  approach would show. `voiceConnectionService.handlePresenceUpdateForVoice`
+  updates `sessionStartedAt` from PRESENCE_UPDATE when it changes.
+
+  Key Files Modified:
+    src/lib/sessionTimer.ts (NEW)
+    src/hooks/useSessionTimer.ts (NEW)
+    src/services/voiceConnectionService.ts
+
+  Verification:
+    npm run typecheck / lint pass. Live E2E confirmed the timer renders as
+    MM:SS in the connected voice panel. Multi-minute duration and the
+    negative-delta clamp were verified by code review, not by waiting out a
+    real multi-minute session in this pass.
+
+  Next Step: P2.10 — reconnection resilience.
+
+--- Entry: 15/08/2026 ---
+
+Feature/Fix: Phase 2 — P2.10: Reconnection resilience
+
+  Problem: Voice needs to survive (a) a WebRTC transport genuinely losing
+  its connection, (b) the underlying Socket.io connection dropping and
+  reconnecting (which the server treats as a fresh session, so voice must
+  fully rejoin, not just resume), (c) a server-side mediasoup worker crash
+  (VOICE_SESSION_LOST), and (d) mobile browsers silently losing a
+  backgrounded tab's WebRTC connection without ever firing a clean
+  disconnect — a real risk flagged in the PRD as mobile-web-specific,
+  beyond anything the desktop Electron client ever faced.
+
+  Solution: Four independent triggers converge on the same
+  `attemptVoiceRejoin()` (retries the full 6-step handshake up to 3 times,
+  1.5s apart, giving the server time to finish cleaning up the old session
+  before a retry can race it):
+  1. `VoiceService`'s transport `connectionstatechange` handler: "failed"
+     reports immediately; "disconnected" gets a 4000ms grace timer first
+     (ICE frequently self-recovers, e.g. a brief NAT rebind) before
+     reporting — reported at most once per join via `connectionLossReported`.
+  2. `connectionService`'s Socket.io `reconnect` handler now calls
+     `voiceConnectionService.rejoinVoiceIfNeeded()` after the server-level
+     rejoin succeeds.
+  3. `handleVoiceSessionLost` (VOICE_SESSION_LOST listener) triggers a
+     rejoin when the payload's channelId matches `lastVoiceChannelId`.
+  4. A new `document.visibilitychange` listener in `connectionService`
+     calls `voiceConnectionService.rejoinVoiceIfConnectionLost()` on the
+     visible transition, which only actually rejoins if the store's status
+     isn't already "connected" in the last-known channel — covers the
+     silent-backgrounded-tab-loss case with no extra signal from the
+     browser. UI copy in VoiceShortcutsTab explicitly sets expectations as
+     best-effort ("Voice may disconnect if you leave the app — reopen to
+     reconnect"), not a seamless-continuity promise.
+  After `REJOIN_MAX_ATTEMPTS` exhausts, the store fully resets and a
+  destructive toast tells the user to rejoin manually rather than leaving
+  the UI stuck in "reconnecting" forever.
+
+  Key Files Modified:
+    src/services/voiceService.ts
+    src/services/voiceConnectionService.ts
+    src/services/connectionService.ts
+
+  Verification:
+    npm run typecheck / lint pass. The retry-exhaustion and
+    trigger-gating logic were verified by code review; a live
+    kill/restart-the-signaling-server rejoin pass (the kind of test done
+    for Phase 1's P1.5 reconnect fix) was not repeated here for voice
+    specifically — doing so meaningfully requires a real mediasoup server
+    on the other end (per this phase's own PRD: "Requires a reachable
+    reson8 dev/staging server with mediasoup correctly configured... for
+    any real voice testing"), which isn't available in this sandbox. The
+    4000ms ICE-disconnected grace period and the mobile-backgrounding
+    visibilitychange trigger are both explicitly called out in the PRD
+    itself as needing real-device verification, deferred to Phase 7.
+
+  Next Step: P2.11 — voice mini-bar & panel.
+
+--- Entry: 15/08/2026 ---
+
+Feature/Fix: Phase 2 — P2.11: Voice mini-bar & panel
+
+  Problem: Voice controls need to stay reachable without ever being buried
+  behind chat navigation, across three distinct layout compositions
+  (mobile, tablet, desktop) — per the master PRD's "one component set,
+  three compositions" principle, not three separate implementations.
+
+  Solution: `VoicePanel.tsx` (rewritten from the Phase 1 stub) is the single
+  full-featured component (occupant list with speaking/muted/deafened/away
+  indicators, mute/deafen/leave controls, PTT button when in PTT mode,
+  MicPermissionDeniedPanel when applicable) rendered in two places by
+  `AppShell.tsx`: persistently in a `lg:` third column, and inside a
+  mobile/tablet full-screen sheet gated by `uiStore.voicePanelOpen` (NEW
+  state). `VoiceMiniBar.tsx` (rewritten) is a slim always-visible bar
+  (channel name, status/timer, mute/deafen/leave icon buttons) pinned above
+  the mobile tab bar (`lg:hidden`) that expands the sheet on tap, modeled
+  on a "now playing" mini-player so it's never one navigation-tap away from
+  invisible.
+
+  Key Files Modified:
+    src/features/voice/VoicePanel.tsx
+    src/features/voice/VoiceMiniBar.tsx
+    src/app/AppShell.tsx
+    src/stores/uiStore.ts
+
+  Verification:
+    npm run typecheck / lint pass. Live E2E confirmed: the persistent
+    desktop (1440px) panel renders with working mute/deafen/leave controls
+    against a real connected session; the mobile (375px) mini-bar renders
+    while voice is active. Tablet-breakpoint sheet-open/close interaction
+    specifically for voice (as opposed to the general drawer pattern
+    already verified in Phase 1) was not separately re-driven this pass.
+
+  Next Step: P2.12 — sound cues.
+
+--- Entry: 15/08/2026 ---
+
+Feature/Fix: Phase 2 — P2.12: Voice sound cues
+
+  Problem: Voice actions need the desktop client's established sound-alert
+  vocabulary (asset-key convention already defined in CLAUDE.md), including
+  the rule that presence-diff events fire exactly one sound per event, not
+  one per user in the diff.
+
+  Solution: `soundAlert.play(...)` calls added at each transition point:
+  `joining-channel`/`leaving-channel` on join/leave,
+  `mic_muted`/`mic_activated` and `sound_muted`/`sound_resumed` on
+  mute/deafen toggles (deafen toggle sound intentionally reuses the
+  sound_muted/sound_resumed pair, matching the desktop convention that
+  deafen's audio cue is about the user's own audio being cut, same as a
+  self-mute), `connected` on a successful rejoin. `previousOccupantIds` (a
+  module-level `Set<string>` in voiceConnectionService, diffed every
+  PRESENCE_UPDATE via `handlePresenceUpdateForVoice`) drives
+  `user_joined_channel`/`user_disconnected_from_channel` — computed as
+  "did any id newly appear / disappear across the whole diff", called at
+  most once per event regardless of how many users joined/left
+  simultaneously.
+
+  Key Files Modified:
+    src/services/voiceConnectionService.ts
+
+  Verification:
+    npm run typecheck / lint pass. Verified by code review that each call
+    site fires the correct asset key and that the presence-diff logic
+    computes hadJoins/hadLeaves as event-level booleans, not per-user.
+    Actual audio output was not verified (headless sandbox, no audio
+    device) — same caveat as Phase 1's P1.11 sound-alert entry.
+
+  Next Step: Phase 2 acceptance verification.
+
+--- Entry: 15/08/2026 ---
+
+Feature/Fix: Phase 2 acceptance verification
+
+  Problem: Same rationale as Phase 1's acceptance pass — individual P2.x
+  items were built and spot-checked mostly in isolation; needed one pass
+  against a running app checking the phase's actual Acceptance Criteria,
+  and honest reporting on what could/couldn't be verified given this
+  sandbox has no reachable reson8/mediasoup server (a limitation the phase
+  PRD itself calls out as a hard requirement for full voice testing).
+
+  Solution: Extended the same throwaway mock Socket.io server used for
+  Phase 1 (mock-server/server.mjs, scratchpad-only, never committed) with
+  stub handlers for the full voice handshake — GET_ROUTER_CAPABILITIES
+  (returns one real-shaped Opus codec entry so mediasoup-client's
+  Device.load() actually succeeds), CREATE_WEBRTC_TRANSPORT (returns
+  plausibly-shaped but fake iceParameters/iceCandidates/dtlsParameters,
+  including a correctly-lengthed 32-byte sha-256 DTLS fingerprint — an
+  under-length fingerprint was tried first and correctly produced a real
+  `setRemoteDescription`/"Failed to apply remote fingerprint" WebRTC error,
+  which usefully proved the graceful-failure/toast path works before being
+  fixed to let the happy path complete too), CONNECT_TRANSPORT, and PRODUCE
+  (acks with a fake producerId). This is enough for a real
+  mediasoup-client Device/Transport/Producer to be constructed
+  client-side and for the join to reach a genuine "connected" state with a
+  real (locally-instantiated, non-networked) Producer object — sufficient
+  to drive real UI interactions against real state, though no actual SFU
+  audio ever flows (no CONSUME from a second real participant was set up).
+
+  Added two new Vitest unit-test files for the pieces most valuable to
+  verify deterministically rather than via a flaky live browser pass:
+  - src/services/voiceService.test.ts (9 tests) — the mute/deafen state
+    machine in isolation, injecting a fake producer via the class's
+    private field.
+  - src/services/voiceConnectionService.test.ts (13 tests) — the
+    mode-aware layer on top (mute-while-deafened auto-undeafen-then-toggle,
+    PTT lock-flag semantics, pttPress/pttRelease gating, and the
+    permissionDenied DOMException-name classification), using vi.mock for
+    VoiceService/socketService/soundAlert/toastStore.
+
+  Ran every acceptance criterion reachable in this sandbox against the
+  built app via a Playwright script (permissions: ["microphone"] +
+  --use-fake-device-for-media-stream / --use-fake-ui-for-media-stream
+  Chromium launch args for the granted-permission path):
+  - Full join handshake completes and reaches "connected" (session timer
+    visible) against the stub server — real Device/Transport/Producer
+    objects, no crash.
+  - Mute -> Unmute toggles correctly against a real Producer.
+  - Deafen -> Undeafen toggles correctly; Deafen-then-Undeafen while
+    already muted before deafening correctly restores "still muted" (the
+    exact discrepancy-from-desktop-PRD behavior called out in the P2.5
+    entry), reproduced through real button clicks this time, not just
+    injected unit-test state.
+  - A getUserMedia failure (no fake device + no granted permission,
+    producing NotFoundError/NotSupportedError in this headless
+    environment rather than the exact NotAllowedError a real browser
+    denial click would produce) surfaces a graceful "Couldn't join voice"
+    toast and returns the panel to a clean "Not in a voice channel" idle
+    state — no crash, no stuck spinner. The permissionDenied=true
+    classification branch specifically is instead verified deterministically
+    by the unit test described above, since reproducing the exact
+    NotAllowedError DOMException name via headless Chromium's permission
+    model was unreliable in this sandbox (three different attempts
+    produced three different DOMException names depending on flag
+    combination — a headless-environment quirk, not a client bug).
+  - Settings -> Voice & Shortcuts tab: PTT/Voice-Activation toggle buttons
+    render and the active state flips on click; all 4 shortcut recorder
+    rows (PTT/Mute/Deafen/Disconnect) render "Set"/"Clear" controls;
+    microphone device `<select>` renders.
+  - Mobile (375px) mini-bar renders while voice is active; desktop
+    (1440px) persistent third-column panel renders with working controls.
+  17/17 checks in this pass, zero console/page errors across every
+  scenario.
+
+  Remaining gaps against the phase's stated Acceptance Criteria, honestly
+  flagged rather than silently claimed as done:
+    - "Two browser tabs... hear each other with acceptable latency on a
+      local/LAN test server" — NOT verified. Requires a real mediasoup SFU
+      actually routing RTP between two producers/consumers; the stub mock
+      server has no real media plane at all. This is the PRD's own
+      explicitly-flagged hard dependency ("Requires a reachable reson8
+      dev/staging server with mediasoup correctly configured... coordinate
+      server availability before starting this phase's implementation") —
+      no such server was available in this sandbox for the whole phase.
+    - "Backgrounding the mobile browser tab for 30s... triggers a
+      visibility-driven reconnection... verified via real device testing,
+      not just emulation" — NOT verified via a real device; the trigger
+      wiring was verified by code review only (see P2.10 entry). The PRD
+      itself defers real confirmation to Phase 7's device-testing pass.
+    - Mediasoup-worker-crash recovery (VOICE_SESSION_LOST) — handler wiring
+      verified by code review only; no real server to actually crash a
+      worker against.
+    - Actual audible playback of remote/local audio was not verified — no
+      audio device in this headless sandbox (same caveat as Phase 1's
+      sound-alert entry).
+    - mobile-safari (webkit) Playwright project still crashes on
+      page.goto in this proot/ARM64 sandbox — same pre-existing,
+      already-documented sandbox limitation from Phase 1 (see that
+      phase's acceptance entry), unrelated to any Phase 2 code; chromium
+      and mobile-chrome e2e specs (unrelated to voice — connect-screen +
+      accessibility) both still pass.
+
+  Key Files Modified:
+    (none beyond the P2.1-P2.12 entries above; this entry covers
+    verification tooling only)
+    src/services/voiceService.test.ts (NEW)
+    src/services/voiceConnectionService.test.ts (NEW)
+
+  Verification:
+    npm run typecheck / lint / test all pass (33/33 unit tests across 5
+    files, up from 11 at the end of Phase 1). npm run test:e2e: 4/6 pass
+    (chromium + mobile-chrome; mobile-safari fails on the pre-existing
+    sandbox limitation noted above) — unchanged from Phase 1, confirming
+    no regression to the Phase 1 specs. Manual Playwright-driven voice
+    pass: 17/17 checks passing, detailed above.
+
+  Next Step: Phase 2 complete — run /bump-version (MAJOR, per the PRD:
+  this phase ships new capabilities throughout), then begin Phase 3.
+
+=== Version bumped to 2.0.0 (15/08/2026) — classification: MAJOR ===
