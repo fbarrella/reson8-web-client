@@ -18,9 +18,9 @@ assuming a feature is in/out of scope for a given phase.
 Tech Stack: React + TypeScript + Vite, Zustand, Tailwind CSS + shadcn/ui
 (Radix), socket.io-client, mediasoup-client, vite-plugin-pwa.
 
-Current status: planning complete (master PRD + 7 phase PRDs), no
-application code written yet. Phase 1 (foundation, connection, PWA shell)
-is next.
+Current status: Phase 1 (foundation, connection, PWA shell) implemented —
+see the entries below for what's done and what's left before the phase's
+acceptance criteria are formally closed out.
 
 
 ================================================================================
@@ -30,14 +30,602 @@ is next.
 Use `/log-progress` (see .claude/commands/log-progress.md) to append entries
 here in the established format:
 
---- Entry: DD/MM/YYYY ---
+--- Entry: 14/08/2026 ---
 
-Feature/Fix: <name>
+Feature/Fix: Phase 1 — P1.1: Project scaffold
 
-  Problem: ...
-  Solution: ...
+  Problem: The repo held only the PRD set — no application code, tooling,
+  or package.json existed yet.
+
+  Solution: Scaffolded a Vite + React 19 + TypeScript project by hand
+  (rather than `npm create vite` into the already-non-empty repo root):
+  copied the current `react-ts` template's src/public/index.html/vite.config
+  baseline, then layered on TS strict mode (all flags explicit, not just
+  `strict: true`, per the PRD's wording), a `@/*` -> `src/*` path alias,
+  ESLint flat config (`@typescript-eslint` via `typescript-eslint`,
+  `eslint-plugin-react-hooks`, `eslint-plugin-jsx-a11y`, `eslint-plugin-
+  react-refresh`, `eslint-config-prettier`), Prettier, Vitest + React
+  Testing Library + jsdom, and Playwright (chromium, mobile-chrome via
+  Pixel 7 emulation, mobile-safari via iPhone 14 emulation / webkit).
+  `package.json` starts at version `0.1.0` per the PRD.
+
+  Environment note (read before running installs in this sandbox): this
+  proot/ARM64 environment has two networking quirks that make plain `npm
+  install` unreliable —
+    1. Node's Happy-Eyeballs dual-stack connect hangs for minutes on this
+       host's broken IPv6 path. Fix: run npm/node with
+       `NODE_OPTIONS=--network-family-autoselection=false` (or `export` it
+       once per shell) — this took install times from 10+ minutes/package
+       down to ~1-3s/package.
+    2. npm's cacache tarball-rename can race under this filesystem's
+       compression layer, surfacing as `ENOENT ... syscall rename` on a
+       tmp->content-addressed path. It's usually transient — delete the one
+       named stale cache entry (or the whole `_cacache` dir) and retry.
+       Installing with a project-local `--cache` dir (not the default
+       `~/.npm`) avoids a separate, harder-to-reproduce variant of the same
+       symlink issue. Prefer `--maxsockets 1` for larger batches — it
+       trades speed for eliminating the concurrent-write race almost
+       entirely.
+  Also hit two real (non-environment) issues worth remembering: (a)
+  `@testing-library/dom` is a *peer* dependency of `@testing-library/react`
+  v16, not a transitive one — must be installed explicitly; (b) the
+  current `@vitejs/plugin-react@6.x` has an optional peer on
+  `@rolldown/plugin-babel` (Babel 8) that conflicts with `vite-plugin-pwa`'s
+  `workbox-build` (Babel 7) chain — resolved with `--legacy-peer-deps`,
+  safe here since the Rolldown/Babel-8 path isn't used.
+
   Key Files Modified:
-    ...
+    package.json (NEW)
+    tsconfig.json, tsconfig.app.json, tsconfig.node.json (NEW)
+    vite.config.ts (NEW)
+    eslint.config.js (NEW)
+    .prettierrc.json, .prettierignore (NEW)
+    playwright.config.ts (NEW)
+    .gitignore (NEW entries: node_modules, dist, dev-dist, .npm-cache,
+      coverage, playwright-report, test-results)
+    index.html, src/main.tsx, src/vite-env.d.ts (NEW)
+    src/test/setup.ts (NEW)
+
   Verification:
-    ...
-  Next Step: ...
+    npm run typecheck, npm run lint, npm run test, npm run build all pass.
+    npm run test:e2e passes on chromium + mobile-chrome; mobile-safari
+    (webkit) crashes on page.goto in this specific proot/ARM64 sandbox —
+    confirmed as a sandbox/webkit-on-ARM limitation (page crash, not an
+    assertion failure) via repeated runs, not a product bug. Flagging for
+    Phase 7's real-device pass rather than blocking Phase 1 on it.
+
+  Next Step: P1.2 — vendor the protocol types.
+
+--- Entry: 14/08/2026 ---
+
+Feature/Fix: Phase 1 — P1.2: Vendored protocol types
+
+  Problem: This repo needs the `reson8` server's wire-protocol types
+  without a build-time dependency on the sibling repo.
+
+  Solution: Copied `packages/shared-types/src/{models,socket-events,
+  index}.ts` from `../reson8` verbatim into `src/types/reson8-protocol/`,
+  each prefixed with a header comment recording the source path, the
+  desktop repo's version (1.4.1) and commit (8ccd0cc78921ef3f8042b79e
+  3650496a06444767) at copy time, and copy date. No content changes beyond
+  the header, per the PRD. Cross-checked the copied contract against
+  CLAUDE.md's protocol mirror section — they agree; no drift to reconcile.
+  Excluded this directory from ESLint (see P1.1's config) since it's a
+  read-only snapshot, not code we author.
+
+  Key Files Modified:
+    src/types/reson8-protocol/models.ts (NEW)
+    src/types/reson8-protocol/socket-events.ts (NEW)
+    src/types/reson8-protocol/index.ts (NEW)
+
+  Verification:
+    npm run typecheck passes with the vendored types imported throughout
+    the app (socketService, connectionService, channelTreeStore, etc.).
+
+  Next Step: P1.3 — design tokens & shadcn/ui primitives.
+
+--- Entry: 14/08/2026 ---
+
+Feature/Fix: Phase 1 — P1.3: Design tokens & UI primitives
+
+  Problem: No design system existed — colors, spacing, and the accessible
+  interactive primitives (Dialog/Sheet/Tabs/Toast/etc.) the rest of the
+  phase depends on hadn't been installed or themed.
+
+  Solution: Tailwind v4 (CSS-first config, no tailwind.config.js) via
+  `@tailwindcss/vite`. Single dark theme per master PRD §5.2: OKLCH color
+  tokens defined once on `:root` in src/index.css and re-exposed through
+  `@theme inline` so Tailwind utilities (`bg-background`, `text-primary`,
+  etc.) resolve to them — structured so a future light theme is a token
+  swap, not a rewrite, without actually building one this phase. Installed
+  the full Radix/shadcn primitive set the PRD calls for (Dialog, Tabs,
+  Toast, DropdownMenu, Popover, Slider, Avatar, Slot, Label) plus `vaul`
+  for Drawer, though the Settings sheet built this phase (P1.10) still
+  uses a hand-rolled dialog rather than the Radix one — see that entry.
+  Hand-authored Button/Input/Label/Badge (shadcn's canonical, Radix-free
+  implementations) with `cva` + `cn()` (clsx + tailwind-merge). All
+  interactive sizes respect the 44x44px touch-target minimum (master PRD
+  §5.2 / WCAG 2.5.5).
+
+  Key Files Modified:
+    src/index.css (NEW) — design tokens + Tailwind entry
+    src/lib/utils.ts (NEW) — cn() helper
+    src/components/ui/button.tsx, input.tsx, label.tsx, badge.tsx (NEW)
+    eslint.config.js — per-file rule overrides for src/components/ui/**
+      (react-refresh/only-export-components and jsx-a11y/label-has-
+      associated-control both false-positive on shadcn's standard
+      component shape)
+
+  Verification:
+    npm run lint passes (0 problems). axe-core smoke pass on the connect
+    screen (Button/Input/Label usage) — see P1.6's entry for the fix that
+    made it pass (a landmark-region violation, not primitive-related).
+
+  Next Step: P1.4 — app shell & responsive composition.
+
+--- Entry: 14/08/2026 ---
+
+Feature/Fix: Phase 1 — P1.4: App shell & responsive composition
+
+  Problem: No routing or layout shell existed to compose the mobile
+  nav-stack / tablet two-pane / desktop three-pane breakpoints described
+  in master PRD §5.1.
+
+  Solution: React Router routes: `/connect`, `/app` (+ index and
+  `channels/:channelId`, `chat`, `dms`, `dms/:partnerId`, `voice` children),
+  guarded by `<RequireConnection>` (redirects to /connect unless
+  connectionStore.status === "connected") and `<RedirectIfConnected>` (the
+  inverse, so an already-connected session bounces off /connect on
+  back-navigation). `<AppShell>` composes one component set three ways via
+  Tailwind breakpoints: the channel tree pane is `hidden lg:block` (desktop
+  three-pane); a `md:`-only overlay drawer (Radix-free — a fixed-position
+  backdrop + panel toggled by uiStore) stands in for the tablet two-pane
+  drawer; the bottom tab bar (Channels/Chat/DMs/Voice, `lg:hidden`) and a
+  reserved-but-empty `<VoiceMiniBar>` slot (Phase 2 populates it) cover
+  mobile. `ChannelsPage` renders the tree inline (`lg:hidden`) as the
+  mobile/tablet main content and a "select a channel" placeholder at
+  `lg:`, so the three-pane desktop view doesn't show the tree twice.
+
+  Bug caught and fixed during manual verification: the header's hamburger
+  ("Open channels") button was visible at the mobile breakpoint but its
+  target drawer only renders at `md:` — a dead button on phones. Fixed by
+  flipping the button's breakpoint classes to `hidden md:inline-flex
+  lg:hidden` so it only appears where the drawer actually exists.
+
+  Key Files Modified:
+    src/App.tsx (NEW)
+    src/app/AppShell.tsx, AppHeader.tsx, BottomTabBar.tsx,
+      RequireConnection.tsx, RedirectIfConnected.tsx, PlaceholderPane.tsx
+      (NEW)
+    src/features/channels/ChannelsPage.tsx (NEW)
+    src/features/voice/VoiceMiniBar.tsx (NEW, empty slot)
+    src/stores/uiStore.ts (NEW) — settingsOpen / channelDrawerOpen
+
+  Verification:
+    Manually driven with Playwright against a throwaway local mock
+    socket.io server (not committed — see P1.6's entry) at 375px, 820px,
+    and 1440px viewports: no horizontal scroll at any width, the header
+    bug above was caught and fixed via a real screenshot, and the fixed
+    version was re-verified with fresh screenshots at all three widths.
+    npm run typecheck / lint / test / build all pass.
+
+  Next Step: P1.5 — connection store & Socket.io service.
+
+--- Entry: 14/08/2026 ---
+
+Feature/Fix: Phase 1 — P1.5: Connection store & Socket.io service
+
+  Problem: No typed transport layer existed to talk to the reson8 server.
+
+  Solution: `socketService` wraps a single `socket.io-client` instance
+  typed as `Socket<ServerToClientEvents, ClientToServerEvents>` (from the
+  P1.2 vendored types) — deliberately a thin wrapper, not a reimplementation:
+  `.on`/`.emit` on the underlying socket are already fully typed, so this
+  only adds connection lifecycle (this app never holds more than one
+  server connection, per master PRD §7 non-goal 5) and promise wrappers
+  for the ack-based events this phase actually uses (USER_JOIN_SERVER,
+  USER_JOIN_CHANNEL, PING_LATENCY) rather than a generic emit-with-ack
+  utility for the whole protocol up front. `connectionStore` (Zustand)
+  holds status/serverId/nickname/instanceId/latencyMs/clockOffsetMs/error.
+  `connectionService.connectToServer()` distinguishes a transport-level
+  failure (`connect_error` -> "Can't reach that server.") from an
+  application-level join rejection (ack.success === false -> the server's
+  own error message, e.g. wrong password) so the surfaced message is
+  accurate either way. Reconnection relies on Socket.io's built-in
+  reconnect (not a custom loop): `socket.on("disconnect", ...)` ignores
+  the "io client disconnect" reason (an intentional leaveServer() call)
+  and otherwise flips status to "reconnecting"; `socket.io.on("reconnect",
+  ...)` flips it back to "connected".
+
+  Key Files Modified:
+    src/services/socketService.ts, connectionService.ts (NEW)
+    src/stores/connectionStore.ts (NEW)
+
+  Verification:
+    Exercised live against the throwaway mock server (P1.6's entry):
+    successful join, wrong-password rejection, and the ping loop all
+    behaved as designed. Reconnect-after-server-restart was implemented
+    per the design above but not independently re-verified this session
+    (ran out of session time after the rest of Phase 1 landed) — flagged
+    as the first thing to manually confirm before closing out the phase.
+    npm run typecheck / lint / test pass.
+
+  Next Step: P1.6 — connect screen.
+
+--- Entry: 14/08/2026 ---
+
+Feature/Fix: Phase 1 — P1.6: Connect screen
+
+  Problem: No UI existed for a user to enter server URL / nickname /
+  password and join a server.
+
+  Solution: React Hook Form + Zod (serverUrl required, nickname 2-32
+  chars, password optional, rememberMe boolean). `normalizeServerUrl()`
+  infers `ws://` for localhost/127.0.0.1 and `wss://` otherwise when the
+  user omits a scheme (matches browsers' own mixed-content stance since
+  this PWA will itself be served over https). Remember Me persists to
+  `localStorage` under the desktop client's exact key names
+  (`reson8-remember-me`, `reson8-server-url`, `reson8-nickname`,
+  `reson8-server-password`) per CLAUDE.md's stated convention. Inline
+  error banner reads `connectionStore.error`, which connectionService
+  populates with the transport-vs-application-error distinction described
+  in P1.5. Password field has a show/hide toggle (Eye/EyeOff icons).
+
+  Manual E2E verification setup (for future sessions): no real `reson8`
+  server was available, so I wrote a throwaway ~80-line mock Socket.io
+  server (not committed anywhere in this repo) implementing just
+  USER_JOIN_SERVER (with a hardcoded "secret" password check),
+  CHANNEL_TREE_UPDATE (a small fixture tree — a text category with a text
+  channel and a voice channel with two occupants, plus a top-level NSFW
+  text channel), PING_LATENCY, and USER_JOIN_CHANNEL. Drove it with
+  Playwright (playwright-core, since @playwright/test's own runner isn't
+  suited to ad-hoc scripts) to click through connect -> channel tree ->
+  settings -> about tab, screenshotting at 375/820/1440px. Zero
+  console/page errors throughout. This confirmed the full P1.5/P1.6/P1.8/
+  P1.9/P1.10 vertical slice actually works end-to-end, not just in
+  isolation per-component.
+
+  Accessibility fix found via this session's axe-core pass (see P1.3):
+  the connect screen's root was a bare `<div>`, tripping axe's "region"
+  rule ("some page content is not contained by landmarks"). Changed the
+  root element to `<main>`.
+
+  Key Files Modified:
+    src/features/connection/ConnectScreen.tsx (NEW)
+    src/lib/serverUrl.ts, rememberMe.ts (NEW)
+
+  Verification:
+    Live manual flow against the mock server described above (success,
+    wrong-password, and validation-error paths all confirmed). npm run
+    test passes (3 ConnectScreen tests: renders, nickname-too-short
+    validation, submits normalized values — connectToServer mocked).
+    npm run test:e2e (axe-core) passes after the <main> fix.
+
+  Next Step: P1.7 — instance identity.
+
+--- Entry: 14/08/2026 ---
+
+Feature/Fix: Phase 1 — P1.7: Instance identity
+
+  Problem: Reson8 has no login — the client needs a stable, self-generated
+  identity per browser profile.
+
+  Solution: `getOrCreateInstanceId()` reads `localStorage['reson8-instance-
+  id']`, generating via `crypto.randomUUID()` and persisting on first call
+  if absent. No dev/packaged distinction (there's no such concept on the
+  web). "Copy Instance ID" button wired into the About tab (P1.10) using
+  `navigator.clipboard.writeText`, with a 2s check-icon confirmation state.
+
+  Key Files Modified:
+    src/lib/instanceId.ts (NEW)
+    src/features/settings/AboutTab.tsx (NEW) — Copy Instance ID button
+
+  Verification:
+    npm run test passes (2 instanceId tests: creates+persists, returns
+    same id on repeat calls). Confirmed live in the mock-server flow (see
+    P1.6) — About tab showed a real, stable-looking UUID.
+
+  Next Step: P1.8 — channel tree read-only render.
+
+--- Entry: 14/08/2026 ---
+
+Feature/Fix: Phase 1 — P1.8: Channel tree (read-only render)
+
+  Problem: No UI existed to render the hierarchical channel tree or live
+  presence.
+
+  Solution: `channelTreeStore` holds the nested `IChannelTreeNode[]` tree
+  from CHANNEL_TREE_UPDATE plus a flat `nodesById` Map rebuilt on every
+  update for O(1) lookup (needed repeatedly in later phases, per the PRD).
+  Presence is folded into this same store rather than a separate
+  presenceStore (the PRD explicitly leaves this as a judgment call, and
+  the master PRD's own "State/Data Additions" section for this phase only
+  lists channelTreeStore, not a separate presence store) —
+  `updatePresence(channelId, occupants)` patches the matching node's
+  `.occupants` in place and shallow-clones the root array so subscribers
+  re-render. `<ChannelTreePanel>` recursively renders categories
+  (collapsible, chevron toggle), text channels (unread dot placeholder off
+  `hasUnread`, NSFW badge), and voice channels (occupant count + expanded
+  occupant list with mute/deafen/away glyphs). Rows have no real
+  navigation yet (Phase 2/4 add it) — tapping a leaf channel shows a
+  "coming soon" toast rather than being inert, per the PRD's stated
+  developer's-call language.
+
+  Key Files Modified:
+    src/stores/channelTreeStore.ts (NEW)
+    src/features/channels/ChannelTreePanel.tsx (NEW)
+
+  Verification:
+    Confirmed live against the mock server's fixture tree (see P1.6): the
+    category/text/voice/NSFW/occupant rendering all matched the fixture
+    exactly across mobile, tablet-drawer, and desktop-sidebar
+    presentations (screenshotted). npm run lint / typecheck pass.
+
+  Next Step: P1.9 — status/latency display.
+
+--- Entry: 14/08/2026 ---
+
+Feature/Fix: Phase 1 — P1.9: Status/latency display
+
+  Problem: No latency/connection-quality indicator existed.
+
+  Solution: `connectionService` runs a 3s PING_LATENCY loop (fires
+  immediately on connect, then every 3000ms) computing RTT and an
+  NTP-style clock offset (`offset ≈ serverTime - (localSendTime + rtt /
+  2)`), both stored on connectionStore for Phase 2's session timers to
+  reuse without re-deriving the mechanism. `<LatencyIndicator>` shows a
+  color-coded dot (green <100ms, amber <250ms, red otherwise; gray/"—" if
+  disconnected or not yet measured) plus the numeric ms value, with
+  role="status" aria-live="polite" so screen readers announce changes.
+
+  Key Files Modified:
+    src/features/connection/LatencyIndicator.tsx (NEW)
+    src/services/connectionService.ts — ping loop (see P1.5 entry)
+
+  Verification:
+    Confirmed live against the mock server: indicator showed real,
+    plausible single-digit-to-low-double-digit ms values and updated on
+    the 3s cadence. npm run typecheck / lint pass.
+
+  Next Step: P1.10 — settings shell.
+
+--- Entry: 14/08/2026 ---
+
+Feature/Fix: Phase 1 — P1.10: Settings shell
+
+  Problem: No always-available Settings surface existed.
+
+  Solution: `<SettingsSheet>` — a hand-rolled, not Radix-based, modal
+  (full-screen on mobile, centered panel at lg:) with the 7 tabs the
+  desktop client has (Roles, Emojis, Server, Voice & Shortcuts,
+  Application, Audio, About), all but About/Application rendering a
+  "coming soon" placeholder (Server's placeholder is connection-aware:
+  "Connect to a server to manage this" when disconnected). Basic a11y by
+  hand rather than via Radix Dialog: `role="dialog" aria-modal="true"`,
+  focus moved to the panel on open, Escape-to-close, backdrop-click-to-
+  close. About tab is fully functional (P1.7's Copy Instance ID + a
+  build-time-injected version string — see below). Application tab has
+  the "Mute sound alerts" toggle wired to settingsStore.
+
+  Known gap, flagged rather than silently left: @radix-ui/react-dialog and
+  @radix-ui/react-tabs were installed (P1.3) specifically so this
+  component could use them, but it still uses the hand-rolled version
+  above. Manual focus-trapping is real but less robust than Radix's
+  (e.g. it doesn't loop Tab at the panel boundaries). Worth swapping to
+  the Radix primitives in a follow-up pass rather than treating this as
+  done-done — the accessibility upgrade Radix gives "for free" per master
+  PRD §5.5 isn't actually realized here yet.
+
+  Build-time version injection: `vite.config.ts` reads package.json's
+  version and exposes it as the `__APP_VERSION__` global (declared in
+  src/vite-env.d.ts), consumed by AboutTab.
+
+  Key Files Modified:
+    src/features/settings/SettingsSheet.tsx, AboutTab.tsx,
+      ApplicationTab.tsx (NEW)
+    vite.config.ts — __APP_VERSION__ define
+    src/vite-env.d.ts (NEW)
+
+  Verification:
+    Confirmed live against the mock server: opened via the header gear
+    icon, About tab showed version 0.1.0 and a real instance ID, Escape
+    closed it. npm run typecheck / lint pass.
+
+  Next Step: P1.11 — sound alert infrastructure.
+
+--- Entry: 14/08/2026 ---
+
+Feature/Fix: Phase 1 — P1.11: Sound alert infrastructure
+
+  Problem: No sound-alert asset pipeline or playback helper existed, and
+  every later phase's sound cues depend on getting the autoplay-unlock
+  pattern right once, here.
+
+  Solution: Copied the desktop client's actual .mp3 assets from
+  `../reson8/apps/client/assets/sound-alerts/` into `public/sounds/`
+  (reusing exact filenames, per CLAUDE.md's asset-key convention) rather
+  than authoring placeholders. `soundAlert.init()` (called once from
+  main.tsx) attaches one-time pointerdown/keydown listeners that flip an
+  `unlocked` flag; `soundAlert.play(name, category)` is a no-op until that
+  flag is set, and otherwise lazily constructs (and caches) a plain
+  `new Audio(...)` per sound name — no AudioContext needed for one-shot
+  local-file playback (the "detached new Audio() produces no sound"
+  pitfall in CLAUDE.md is specific to consumed mediasoup MediaStream
+  tracks, not this case). Respects settingsStore's muteAlerts flag and
+  per-category volume (alert vs nudge). `connected`/`disconnected` are the
+  only two events wired to sounds this phase, per scope.
+
+  localStorage Keys: reson8-mute-alerts, reson8-alert-volume,
+  reson8-nudge-volume (settingsStore) — values only this phase; slider UI
+  ships in Phase 3's Audio tab per the PRD.
+
+  Key Files Modified:
+    src/lib/soundAlert.ts (NEW)
+    src/stores/settingsStore.ts (NEW)
+    public/sounds/*.mp3 (NEW, 19 files copied from ../reson8)
+    src/main.tsx — soundAlert.init() call
+    src/services/connectionService.ts — connected/disconnected play() calls
+
+  Verification:
+    npm run typecheck / lint pass. Did not verify actual audio output in
+    this session (headless browser automation, no audio device) — the
+    unlock-gating logic and event wiring were checked by reading the code
+    path, not by hearing sound. Flagged for a real-browser manual check
+    before treating this item as fully closed.
+
+  Next Step: P1.12 — toast system.
+
+--- Entry: 14/08/2026 ---
+
+Feature/Fix: Phase 1 — P1.12: Toast system
+
+  Problem: No toast/notification surface existed for the rest of the app
+  to report errors and status changes through.
+
+  Solution: `toastStore` (Zustand) + a generic `toast({title, description?,
+  variant?})` helper (auto-dismiss after 5s). `<Toaster>` renders the
+  queue with `role="status"` (default variant) or `role="alert"`
+  (destructive variant) and `aria-live="polite"` on the container — same
+  gap as P1.10's SettingsSheet: @radix-ui/react-toast is installed but
+  not used yet; this is a plain-div implementation with the same public
+  API a future Radix-backed version would have, so callers don't need to
+  change when that swap happens.
+
+  Key Files Modified:
+    src/stores/toastStore.ts (NEW)
+    src/components/ui/toaster.tsx (NEW)
+    src/App.tsx — <Toaster /> mounted at the root
+
+  Verification:
+    Exercised indirectly via ChannelTreePanel's "coming soon" toast and
+    connectionService's ERROR-event toast during the mock-server manual
+    flow (P1.6) — not independently screenshotted, but rendered without
+    console errors. npm run lint / typecheck pass.
+
+  Next Step: P1.13 — PWA baseline.
+
+--- Entry: 14/08/2026 ---
+
+Feature/Fix: Phase 1 — P1.13: PWA baseline
+
+  Problem: No manifest or service worker existed; the build needed to
+  produce an installable artifact from the start rather than bolting PWA
+  on in Phase 7.
+
+  Solution: `vite-plugin-pwa` in `generateSW` mode (Phase 7 switches to
+  `injectManifest` once the custom update-prompt logic needs it — flagged
+  in vite.config.ts so Phase 7 isn't surprised). Manifest: name "Reson8",
+  theme_color/background_color matching the dark token palette (P1.3),
+  display: "standalone", icons at 192/512/512-maskable.
+
+  Known gap: the three manifest icon files are all the *same* 512x512
+  PNG (copied from ../reson8/logo_512x512.png) with different `sizes`
+  attributes declared — no image-resize tooling (no ImageMagick, no
+  Pillow, no sharp) was available in this sandbox to actually produce a
+  192x192 or a properly-padded maskable variant. This is very likely
+  fine for Lighthouse's installability check (it validates the manifest
+  fields and that an icon URL resolves, not pixel-exact dimension
+  matching) but is real follow-up work — either install an image tool in
+  a normal dev environment and regenerate proper sizes, or source real
+  192/512/maskable assets from design.
+
+  Key Files Modified:
+    vite.config.ts — VitePWA plugin config
+    public/icons/icon-192.png, icon-512.png, icon-maskable-512.png (NEW,
+      all currently identical 512x512 source images — see gap above)
+
+  Verification:
+    npm run build succeeds and generates dist/manifest.webmanifest,
+    dist/sw.js, dist/workbox-*.js (13 precache entries, ~760 KiB). Did not
+    run an actual Lighthouse audit this session (no Chrome DevTools/CI
+    Lighthouse runner available) — the acceptance criterion "Lighthouse
+    PWA installability check passes" is unverified, only "the build
+    produces the artifacts Lighthouse would check" is confirmed.
+
+  Next Step: Phase 1 acceptance criteria verification, then /bump-version.
+
+--- Entry: 15/08/2026 ---
+
+Feature/Fix: Phase 1 acceptance criteria verification
+
+  Problem: Needed to actually check the phase's acceptance criteria against
+  a running instance rather than trusting the per-item entries above in
+  isolation, since several were built and manually spot-checked one at a
+  time rather than as a full end-to-end pass.
+
+  Solution: Ran every acceptance criterion against the built app driven by
+  Playwright, live-connected to the same throwaway mock server described
+  in the P1.6 entry. Found and fixed three real bugs this pass caught:
+
+  1. axe-core on the connected app shell (not just the connect screen)
+     found 2 violations neither the P1.3/P1.6 per-item checks had
+     exercised: (a) the "18+" NSFW badge's destructive-on-destructive-
+     foreground text only hit 3.17:1 contrast (WCAG needs 4.5:1 for small
+     text) — darkened --destructive from oklch(0.65 ...) to oklch(0.5 ...)
+     in src/index.css; (b) no page-level <h1> existed once you leave the
+     connect screen — changed AppHeader's "Reson8" title span to an <h1>.
+     Re-ran axe on both screens after the fix: 0 violations.
+
+  2. Live resize of a single running session from 375px to 1280px and back
+     confirmed no horizontal scroll at either width, the channel tree
+     stays rendered across the breakpoint change, and the socket
+     connection / ping loop are untouched by the layout change (latency
+     indicator kept ticking) — matching the acceptance criterion exactly.
+
+  3. Killing the mock server mid-session and restarting it (kill -9,
+     ~13s outage, then a fresh process on the same port) surfaced a real
+     gap in P1.5's reconnect handling: on Socket.io's built-in
+     `reconnect` event, the client resumed the ping loop and flipped
+     status back to "connected" without ever re-sending USER_JOIN_SERVER.
+     Since the server treats each socket connection as a fresh session,
+     a bare transport-level reconnect isn't sufficient — the client would
+     show "connected" while never receiving another CHANNEL_TREE_UPDATE
+     or PRESENCE_UPDATE for that session. Fixed in
+     src/services/connectionService.ts: `attachLifecycleListeners` now
+     takes the original join params and re-runs the join handshake inside
+     the `reconnect` handler before declaring the connection recovered
+     (and surfaces an error + disconnects if the rejoin itself is
+     rejected, e.g. the user was banned during the outage).
+
+  Remaining gaps, honestly flagged rather than silently claimed as done:
+    - Never tested against a real `reson8` server — only the throwaway
+      mock described in P1.6. The mock only implements the handful of
+      events this phase touches (USER_JOIN_SERVER, USER_JOIN_CHANNEL,
+      PING_LATENCY, CHANNEL_TREE_UPDATE emit); it does not validate
+      nickname-length/format rules, real password hashing, or any
+      server-side edge cases a real deployment would exercise.
+    - No Lighthouse PWA-installability audit was run (no Chrome DevTools
+      / Lighthouse CI available in this sandbox) — only confirmed the
+      build produces the manifest + service worker + precache artifacts
+      Lighthouse would check.
+    - Sound alert playback (P1.11) was verified by code-reading the
+      unlock-gating logic, not by hearing actual audio output (headless
+      sandbox, no audio device).
+    - mobile-safari (webkit) Playwright project crashes on page.goto in
+      this proot/ARM64 sandbox specifically — chromium and mobile-chrome
+      (Pixel 7 emulation) both pass everything. Not treated as a product
+      bug; flagged for Phase 7's real-device pass.
+    - Manifest icons are a single 512x512 source image relabeled at three
+      sizes (no image-resize tool available in this sandbox) — see P1.13.
+
+  Key Files Modified:
+    src/index.css — --destructive token contrast fix
+    src/app/AppHeader.tsx — title span -> <h1>
+    src/services/connectionService.ts — reconnect now re-joins
+
+  Verification:
+    npm run typecheck / lint / test all pass (11/11 unit tests). npm run
+    test:e2e passes on chromium + mobile-chrome (4/4: connect-screen
+    no-horizontal-scroll, accessibility x2). axe-core: 0 violations on
+    both the connect screen and the connected app shell. Manual
+    Playwright-driven pass covering: connect (success + validation-error
+    paths), channel tree render with occupants/NSFW/unread-dot fixtures,
+    latency indicator ticking, Settings sheet + About tab content, tablet
+    drawer open/close, 375<->1280px live resize, and the mock-server
+    kill/restart reconnect scenario above — zero console/page errors
+    throughout.
+
+  Next Step: Phase 1 complete — run /bump-version, then begin Phase 2
+  (mediasoup voice core).
+
+=== Version bumped to 1.0.0 (15/08/2026) — classification: MAJOR ===

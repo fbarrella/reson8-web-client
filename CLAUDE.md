@@ -6,15 +6,25 @@ Guidance for Claude Code (or any agent) working in this repository. This file is
 
 Reson8 Web Client is a **mobile-first, fully responsive Progressive Web App** client for Reson8 — a self-hosted voice & text communication server (TeamSpeak-3-style: hierarchical channel tree, SFU voice via mediasoup, persistent text chat, DMs, moderation). Built with React + TypeScript + Vite.
 
-**Current status: planning phase.** This repo currently contains only the PRD set under `app-planning/` — no application code exists yet. **Read `app-planning/00-master-prd.md` first**, then the phase PRD (`app-planning/0N-phase*.md`) relevant to the work at hand, before writing any code. The phase PRDs are sequential and each depends on the ones before it (see the master PRD's Phase Map).
+**Current status: Phase 1 in progress.** Read `app-planning/00-master-prd.md` first, then the phase PRD (`app-planning/0N-phase*.md`) relevant to the work at hand, before writing any code. The phase PRDs are sequential and each depends on the ones before it (see the master PRD's Phase Map).
 
-**Current version: not yet initialized.** Versioning starts at `0.1.0` when Phase 1 scaffolds `package.json` — see "Versioning" below. Once set, keep this line current (that's the whole point of it).
+**Current version: 1.0.0** (Phase 1 complete — MAJOR bump per the policy below, since the phase shipped new capabilities throughout) — see "Versioning" below. Keep this line current as `/bump-version` runs (that's the whole point of it).
 
 This project is **client-only**: it never modifies the `reson8` server, its database schema, or its Socket.io protocol. Confirmed non-goals (see master PRD §7): no server-side changes, no background push notifications, no native app-store wrapper, no offline message queue.
 
 ## Commands
 
-None yet — Phase 1 (`app-planning/01-phase1-foundation-connection.md`, item P1.1) scaffolds the project (Vite + React + TS strict + ESLint flat config + Prettier + Vitest + Playwright). Once scaffolded, this section should be updated to the real `npm run dev/build/typecheck/lint/test/test:e2e` commands — do that update as part of whatever work first adds them, don't leave this file stale.
+Scaffolded in Phase 1 (P1.1): Vite + React + TS strict + ESLint flat config + Prettier + Vitest + Playwright.
+
+- `npm run dev` — Vite dev server
+- `npm run build` — `tsc -b` (typecheck) then `vite build`
+- `npm run preview` — serve the production build locally (used by Playwright's `webServer`)
+- `npm run typecheck` — `tsc -b` only, no emit
+- `npm run lint` — ESLint (flat config, `eslint.config.js`)
+- `npm run format` — Prettier write
+- `npm run test` — Vitest (unit/component, jsdom)
+- `npm run test:watch` — Vitest in watch mode
+- `npm run test:e2e` — Playwright (multi-browser incl. mobile viewport emulation, config in `playwright.config.ts`)
 
 ## Architecture (target — see master PRD §4 for the full diagram)
 
