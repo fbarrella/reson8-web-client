@@ -1,10 +1,22 @@
 # Reson8 Web Client
 
-[![Version](https://img.shields.io/badge/version-unreleased-lightgrey.svg)](#)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](#)
 
 A mobile-first, fully responsive Progressive Web App client for [Reson8](../reson8) — a self-hosted voice & text communication server. Built with React, TypeScript, and Vite. This is an independent client for the existing `reson8` server; it does not modify the server or its protocol.
 
-**Status:** Planning. No application code yet — see `app-planning/` for the full Product Requirements Document set before writing any implementation code. Versioning starts at `0.1.0` once Phase 1 scaffolds the project (see `CLAUDE.md` → Versioning).
+**Status:** Phase 1 complete (foundation, connection, channel tree, settings shell, PWA baseline). See `app-planning/progress.txt` for the build log and `app-planning/` for the full Product Requirements Document set.
+
+## Development
+
+```
+npm install
+npm run dev        # start the dev server
+npm run typecheck  # tsc -b
+npm run lint       # eslint .
+npm run test       # vitest (unit/component)
+npm run test:e2e   # playwright (multi-browser + mobile emulation)
+npm run build      # production build
+```
 
 ## Planning documents
 
