@@ -3,6 +3,7 @@ import { useConnectionStore } from "@/stores/connectionStore";
 import { useChannelTreeStore } from "@/stores/channelTreeStore";
 import { toast } from "@/stores/toastStore";
 import { soundAlert } from "@/lib/soundAlert";
+import * as voiceConnectionService from "@/services/voiceConnectionService";
 import type { ServerToClientEvents } from "@/types/reson8-protocol";
 
 const PING_INTERVAL_MS = 3000;
@@ -33,6 +34,7 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
   };
   const handlePresenceUpdate: ServerToClientEvents["PRESENCE_UPDATE"] = (payload) => {
     useChannelTreeStore.getState().updatePresence(payload.channelId, payload.occupants);
+    voiceConnectionService.handlePresenceUpdateForVoice(payload);
   };
   const handleError: ServerToClientEvents["ERROR"] = (payload) => {
     toast({ title: "Server error", description: payload.message, variant: "destructive" });
@@ -63,10 +65,18 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
         }
         useConnectionStore.getState().setStatus("connected");
         soundAlert.play("connected");
+        // The server session is back — now safe to replay a voice-channel
+        // join, if one was active (Phase 2 PRD P2.10).
+        voiceConnectionService.rejoinVoiceIfNeeded();
       });
   };
   const handleReconnectFailed = () => {
     useConnectionStore.getState().setError("Lost connection to the server.");
+  };
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === "visible") {
+      voiceConnectionService.rejoinVoiceIfConnectionLost();
+    }
   };
 
   socket.on("CHANNEL_TREE_UPDATE", handleTreeUpdate);
@@ -75,6 +85,12 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
   socket.on("disconnect", handleDisconnect);
   socket.io.on("reconnect", handleReconnect);
   socket.io.on("reconnect_failed", handleReconnectFailed);
+  socket.on("NEW_PRODUCER", voiceConnectionService.handleNewProducer);
+  socket.on("PRODUCER_CLOSED", voiceConnectionService.handleProducerClosed);
+  socket.on("EXISTING_PRODUCERS", voiceConnectionService.handleExistingProducers);
+  socket.on("ACTIVE_SPEAKERS", voiceConnectionService.handleActiveSpeakers);
+  socket.on("VOICE_SESSION_LOST", voiceConnectionService.handleVoiceSessionLost);
+  document.addEventListener("visibilitychange", handleVisibilityChange);
 
   return () => {
     stopPing();
@@ -84,6 +100,12 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
     socket.off("disconnect", handleDisconnect);
     socket.io.off("reconnect", handleReconnect);
     socket.io.off("reconnect_failed", handleReconnectFailed);
+    socket.off("NEW_PRODUCER", voiceConnectionService.handleNewProducer);
+    socket.off("PRODUCER_CLOSED", voiceConnectionService.handleProducerClosed);
+    socket.off("EXISTING_PRODUCERS", voiceConnectionService.handleExistingProducers);
+    socket.off("ACTIVE_SPEAKERS", voiceConnectionService.handleActiveSpeakers);
+    socket.off("VOICE_SESSION_LOST", voiceConnectionService.handleVoiceSessionLost);
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
   };
 }
 
@@ -146,6 +168,7 @@ export function connectToServer(params: ConnectParams): Promise<ConnectResult> {
 
 export function leaveServer(): void {
   const { serverId } = useConnectionStore.getState();
+  voiceConnectionService.leaveVoiceChannel();
   cleanupLifecycle?.();
   cleanupLifecycle = null;
   if (serverId) socketService.leaveServer(serverId);

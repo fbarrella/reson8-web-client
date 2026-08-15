@@ -3,6 +3,16 @@ import type { ClientToServerEvents, ServerToClientEvents } from "@/types/reson8-
 
 export type ResonSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
+/** Extracts the ack callback's resolved payload type for a ClientToServerEvents entry. */
+type AckPayload<Ev extends keyof ClientToServerEvents> = ClientToServerEvents[Ev] extends (
+  payload: never,
+  ack: (response: infer R) => void,
+) => void
+  ? R
+  : ClientToServerEvents[Ev] extends (ack: (response: infer R) => void) => void
+    ? R
+    : never;
+
 /**
  * Thin typed wrapper around socket.io-client (Phase 1 PRD P1.5) — the
  * underlying Socket<ServerToClientEvents, ClientToServerEvents> instance is
@@ -69,6 +79,74 @@ class SocketService {
   pingLatency(): Promise<number> {
     return new Promise((resolve) => {
       this.instance.emit("PING_LATENCY", resolve);
+    });
+  }
+
+  // ── Voice/WebRTC handshake (Phase 2 PRD P2.2) ──────────────────────────
+
+  getRouterCapabilities(
+    channelId: string,
+  ): Promise<{ success: boolean; rtpCapabilities?: unknown; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("GET_ROUTER_CAPABILITIES", { channelId }, resolve);
+    });
+  }
+
+  createWebRtcTransport(
+    channelId: string,
+    direction: "send" | "recv",
+  ): Promise<AckPayload<"CREATE_WEBRTC_TRANSPORT">> {
+    return new Promise((resolve) => {
+      this.instance.emit("CREATE_WEBRTC_TRANSPORT", { channelId, direction }, resolve);
+    });
+  }
+
+  connectTransport(
+    transportId: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    dtlsParameters: any,
+  ): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- dtlsParameters is mediasoup's own opaque shape, `any` on the wire per the vendored protocol types
+      this.instance.emit("CONNECT_TRANSPORT", { transportId, dtlsParameters }, resolve);
+    });
+  }
+
+  produce(
+    transportId: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rtpParameters: any,
+  ): Promise<{ success: boolean; producerId?: string; error?: string }> {
+    return new Promise((resolve) => {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- rtpParameters is mediasoup's own opaque shape, `any` on the wire per the vendored protocol types
+      this.instance.emit("PRODUCE", { transportId, kind: "audio", rtpParameters }, resolve);
+    });
+  }
+
+  consume(
+    producerId: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rtpCapabilities?: any,
+  ): Promise<AckPayload<"CONSUME">> {
+    return new Promise((resolve) => {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- rtpCapabilities is mediasoup's own opaque shape, `any` on the wire per the vendored protocol types
+      this.instance.emit("CONSUME", { producerId, rtpCapabilities }, resolve);
+    });
+  }
+
+  resumeConsumer(consumerId: string): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("RESUME_CONSUMER", { consumerId }, resolve);
+    });
+  }
+
+  closeProducer(producerId: string): void {
+    this.instance.emit("CLOSE_PRODUCER", { producerId });
+  }
+
+  setVoiceState(isMuted: boolean, isDeafened: boolean): Promise<{ success: boolean }> {
+    return new Promise((resolve) => {
+      this.instance.emit("SET_VOICE_STATE", { isMuted, isDeafened }, resolve);
     });
   }
 }

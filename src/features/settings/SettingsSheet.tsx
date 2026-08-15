@@ -6,6 +6,7 @@ import { useConnectionStore } from "@/stores/connectionStore";
 import { cn } from "@/lib/utils";
 import { AboutTab } from "@/features/settings/AboutTab";
 import { ApplicationTab } from "@/features/settings/ApplicationTab";
+import { VoiceShortcutsTab } from "@/features/settings/VoiceShortcutsTab";
 
 /**
  * Roles/Emojis/Server tabs are gated on cached connect-time permission flags
@@ -104,7 +105,7 @@ export function SettingsSheet() {
             {activeTab === "roles" && <ComingSoon />}
             {activeTab === "emojis" && <ComingSoon />}
             {activeTab === "server" && <ComingSoon disabled={status !== "connected"} />}
-            {activeTab === "voice" && <ComingSoon />}
+            {activeTab === "voice" && <VoiceShortcutsTab />}
             {activeTab === "audio" && <ComingSoon />}
           </div>
         </div>
