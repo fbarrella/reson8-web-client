@@ -11,8 +11,24 @@ interface ChannelTreeState {
   tree: IChannelTreeNode[];
   nodesById: Map<string, IChannelTreeNode>;
 
+  /**
+   * Reorder Mode staging (Phase 3 PRD P3.6) — ephemeral, not persisted.
+   * `reorderingParentId` is `undefined` when Reorder Mode is off; `null`
+   * means "reordering the root-level siblings"; a channel id means
+   * "reordering that category's children".
+   */
+  reorderingParentId: string | null | undefined;
+  stagedOrder: string[];
+  /** Per-session NSFW confirmation (Phase 3 PRD P3.5) — cleared on disconnect. */
+  confirmedNsfwChannelIds: Set<string>;
+
   setTree: (tree: IChannelTreeNode[]) => void;
   updatePresence: (channelId: string, occupants: IUserPresence[]) => void;
+  startReorder: (parentId: string | null, currentOrder: string[]) => void;
+  moveStaged: (channelId: string, direction: "up" | "down") => void;
+  setStagedOrder: (order: string[]) => void;
+  cancelReorder: () => void;
+  confirmNsfw: (channelId: string) => void;
   reset: () => void;
 }
 
@@ -31,6 +47,9 @@ function indexTree(tree: IChannelTreeNode[]): Map<string, IChannelTreeNode> {
 export const useChannelTreeStore = create<ChannelTreeState>((set, get) => ({
   tree: [],
   nodesById: new Map(),
+  reorderingParentId: undefined,
+  stagedOrder: [],
+  confirmedNsfwChannelIds: new Set(),
 
   setTree: (tree) => set({ tree, nodesById: indexTree(tree) }),
 
@@ -42,5 +61,33 @@ export const useChannelTreeStore = create<ChannelTreeState>((set, get) => ({
     set({ tree: [...get().tree] });
   },
 
-  reset: () => set({ tree: [], nodesById: new Map() }),
+  startReorder: (parentId, currentOrder) => set({ reorderingParentId: parentId, stagedOrder: currentOrder }),
+
+  moveStaged: (channelId, direction) => {
+    const order = [...get().stagedOrder];
+    const index = order.indexOf(channelId);
+    const swapWith = direction === "up" ? index - 1 : index + 1;
+    if (index === -1 || swapWith < 0 || swapWith >= order.length) return;
+    const a = order[index];
+    const b = order[swapWith];
+    if (a === undefined || b === undefined) return;
+    order[index] = b;
+    order[swapWith] = a;
+    set({ stagedOrder: order });
+  },
+
+  setStagedOrder: (stagedOrder) => set({ stagedOrder }),
+
+  cancelReorder: () => set({ reorderingParentId: undefined, stagedOrder: [] }),
+
+  confirmNsfw: (channelId) => set({ confirmedNsfwChannelIds: new Set(get().confirmedNsfwChannelIds).add(channelId) }),
+
+  reset: () =>
+    set({
+      tree: [],
+      nodesById: new Map(),
+      reorderingParentId: undefined,
+      stagedOrder: [],
+      confirmedNsfwChannelIds: new Set(),
+    }),
 }));

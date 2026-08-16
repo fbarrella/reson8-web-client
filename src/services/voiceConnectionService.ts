@@ -1,8 +1,10 @@
 import { socketService } from "@/services/socketService";
 import { VoiceService } from "@/services/voiceService";
-import { useVoiceStore } from "@/stores/voiceStore";
+import { useVoiceStore, readUserOverride } from "@/stores/voiceStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { toast } from "@/stores/toastStore";
 import { soundAlert } from "@/lib/soundAlert";
+import { noiseGatePreviewService } from "@/services/noiseGatePreviewService";
 import type { ServerToClientEvents } from "@/types/reson8-protocol";
 
 const REJOIN_MAX_ATTEMPTS = 3;
@@ -29,7 +31,46 @@ function createVoiceService(): VoiceService {
   const vs = new VoiceService(socketService);
   wireVoiceServiceCallbacks(vs);
   vs.setAudioInputDeviceId(useVoiceStore.getState().selectedInputDeviceId);
+  vs.setNoiseGateEnabled(useVoiceStore.getState().noiseGateEnabled);
+  vs.setNoiseGateThresholdDb(useVoiceStore.getState().noiseGateThresholdDb);
+  vs.setGlobalVoiceVolume(useSettingsStore.getState().globalVoiceVolume);
+  vs.onMicLevel = (db) => useVoiceStore.getState().setMicLevelDb(db);
+  vs.setOverrideProvider((userId) => {
+    const cached = useVoiceStore.getState().userOverrides.get(userId);
+    if (cached) return cached;
+    const fromStorage = readUserOverride(userId);
+    useVoiceStore.getState().setUserOverride(userId, fromStorage);
+    return fromStorage;
+  });
   return vs;
+}
+
+/** Settings tab / occupant sheet entry points (Phase 3 PRD P3.1/P3.2/P3.3). */
+export function setNoiseGateEnabled(enabled: boolean): void {
+  useVoiceStore.getState().setNoiseGateEnabled(enabled);
+  voiceService?.setNoiseGateEnabled(enabled);
+}
+
+export function setNoiseGateThresholdDb(db: number): void {
+  useVoiceStore.getState().setNoiseGateThresholdDb(db);
+  voiceService?.setNoiseGateThresholdDb(db);
+}
+
+export function setGlobalVoiceVolume(percent: number): void {
+  useSettingsStore.getState().setGlobalVoiceVolume(percent);
+  voiceService?.setGlobalVoiceVolume(percent);
+}
+
+export function setUserVolume(userId: string, volumePercent: number): void {
+  const current = useVoiceStore.getState().userOverrides.get(userId) ?? readUserOverride(userId);
+  useVoiceStore.getState().setUserOverride(userId, { ...current, volumePercent });
+  voiceService?.setUserVolume(userId, volumePercent);
+}
+
+export function setUserLocalMute(userId: string, locallyMuted: boolean): void {
+  const current = useVoiceStore.getState().userOverrides.get(userId) ?? readUserOverride(userId);
+  useVoiceStore.getState().setUserOverride(userId, { ...current, locallyMuted });
+  voiceService?.setUserLocalMute(userId, locallyMuted);
 }
 
 /**
@@ -64,6 +105,7 @@ export async function joinVoiceChannel(channelId: string): Promise<JoinVoiceResu
     return { success: false, error: "Not connected." };
   }
 
+  noiseGatePreviewService.stop();
   useVoiceStore.getState().setStatus("joining");
   voiceService?.cleanup();
   voiceService = createVoiceService();

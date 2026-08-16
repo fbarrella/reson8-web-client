@@ -9,7 +9,11 @@ import {
   supportsOutputDeviceSelection,
   type AudioDeviceOption,
 } from "@/lib/audioDevices";
+import { setNoiseGateEnabled, setNoiseGateThresholdDb } from "@/services/voiceConnectionService";
+import { noiseGatePreviewService } from "@/services/noiseGatePreviewService";
+import { MicLevelMeter } from "@/features/voice/MicLevelMeter";
 import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
 
 const SHORTCUT_ROWS: { slot: ShortcutSlot; label: string }[] = [
   { slot: "ptt", label: "Push-to-talk" },
@@ -173,6 +177,78 @@ function DeviceSelectionSection() {
   );
 }
 
+/**
+ * Live meter: while in a voice session, reads the real-time level voiceService
+ * already reports to voiceStore; otherwise runs its own short-lived
+ * getUserMedia preview, started on mount and torn down on unmount or on a
+ * real voice join (Phase 3 PRD P3.1 — this exact preview-outside-a-call
+ * requirement was a specific desktop Phase 8 fix, ported here directly).
+ */
+function NoiseGateSection() {
+  const noiseGateEnabled = useVoiceStore((s) => s.noiseGateEnabled);
+  const noiseGateThresholdDb = useVoiceStore((s) => s.noiseGateThresholdDb);
+  const voiceStatus = useVoiceStore((s) => s.status);
+  const sessionMicLevelDb = useVoiceStore((s) => s.micLevelDb);
+  const inActiveSession = voiceStatus === "connected" || voiceStatus === "joining" || voiceStatus === "reconnecting";
+  const [previewLevelDb, setPreviewLevelDb] = useState<number | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (inActiveSession) return;
+    let cancelled = false;
+    void noiseGatePreviewService.start((db) => {
+      if (!cancelled) setPreviewLevelDb(db);
+    }).catch(() => {
+      if (!cancelled) setPreviewError("Couldn't access your microphone for the preview.");
+    });
+    return () => {
+      cancelled = true;
+      noiseGatePreviewService.stop();
+      setPreviewLevelDb(null);
+    };
+  }, [inActiveSession]);
+
+  const levelDb = inActiveSession ? sessionMicLevelDb : previewLevelDb;
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-sm font-medium text-foreground">Noise Gate</h3>
+        <label className="flex items-center gap-2 text-sm text-muted-foreground">
+          <input
+            type="checkbox"
+            className="size-5"
+            checked={noiseGateEnabled}
+            onChange={(e) => setNoiseGateEnabled(e.target.checked)}
+          />
+          Enabled
+        </label>
+      </div>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Mutes your mic whenever it's quieter than the threshold — useful for suppressing background
+        noise between words. Never overrides an explicit Mute.
+      </p>
+      <MicLevelMeter levelDb={levelDb} thresholdDb={noiseGateEnabled ? noiseGateThresholdDb : undefined} />
+      {previewError && !inActiveSession && (
+        <p className="mt-1 text-xs text-destructive">{previewError}</p>
+      )}
+      <div className="mt-3">
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="text-sm text-foreground">Threshold</span>
+          <span className="text-xs text-muted-foreground">{Math.round(noiseGateThresholdDb)} dB</span>
+        </div>
+        <Slider
+          value={[noiseGateThresholdDb]}
+          min={-60}
+          max={0}
+          step={1}
+          onValueChange={([v]) => v !== undefined && setNoiseGateThresholdDb(v)}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function VoiceShortcutsTab() {
   const pttMode = useVoiceStore((s) => s.pttMode);
   const setPttMode = useVoiceStore((s) => s.setPttMode);
@@ -190,6 +266,10 @@ export function VoiceShortcutsTab() {
           </Button>
         </div>
       </div>
+
+      {/* Mutually exclusive with PTT in the UI — a held PTT key already gates
+          transmission, matching desktop (Phase 3 PRD P3.1). */}
+      {!pttMode && <NoiseGateSection />}
 
       <div>
         <h3 className="mb-1 text-sm font-medium text-foreground">Keyboard shortcuts</h3>

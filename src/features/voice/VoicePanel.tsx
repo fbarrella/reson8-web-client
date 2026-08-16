@@ -5,9 +5,12 @@ import { useChannelTreeStore } from "@/stores/channelTreeStore";
 import { toggleMute, toggleDeafen, leaveVoiceChannel } from "@/services/voiceConnectionService";
 import { useSessionTimer } from "@/hooks/useSessionTimer";
 import { useJoinVoice } from "@/hooks/useJoinVoice";
+import { useConnectionStore } from "@/stores/connectionStore";
 import { Button } from "@/components/ui/button";
 import { PttButton } from "@/features/voice/PttButton";
 import { MicPermissionDeniedPanel } from "@/features/voice/MicPermissionDeniedPanel";
+import { OccupantActionsPopover } from "@/features/voice/OccupantActionsPopover";
+import { MicLevelMeter } from "@/features/voice/MicLevelMeter";
 import { cn } from "@/lib/utils";
 
 function initials(nickname: string): string {
@@ -33,6 +36,10 @@ export function VoicePanel() {
   );
   const timer = useSessionTimer(sessionStartedAt);
   const { permissionDenied, join } = useJoinVoice();
+  const selfNickname = useConnectionStore((s) => s.nickname);
+  const micLevelDb = useVoiceStore((s) => s.micLevelDb);
+  const noiseGateEnabled = useVoiceStore((s) => s.noiseGateEnabled);
+  const noiseGateThresholdDb = useVoiceStore((s) => s.noiseGateThresholdDb);
 
   const isActive = status === "connected" || status === "joining" || status === "reconnecting";
 
@@ -85,6 +92,9 @@ export function VoicePanel() {
                 <MicOff className="size-4 shrink-0 text-muted-foreground" aria-label="Muted" />
               )}
               {occupant.isAway && <span aria-label="Away">💤</span>}
+              {occupant.nickname !== selfNickname && (
+                <OccupantActionsPopover userId={occupant.userId} nickname={occupant.nickname} />
+              )}
             </li>
           );
         })}
@@ -94,6 +104,12 @@ export function VoicePanel() {
         <div className="flex flex-col items-center gap-2 border-t border-border p-4">
           <PttButton disabled={isDeafened} />
           <p className="text-xs text-muted-foreground">Press and hold to talk</p>
+        </div>
+      )}
+
+      {status === "connected" && (
+        <div className="px-4 pt-3">
+          <MicLevelMeter levelDb={micLevelDb} thresholdDb={noiseGateEnabled ? noiseGateThresholdDb : undefined} />
         </div>
       )}
 

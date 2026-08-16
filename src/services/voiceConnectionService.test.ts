@@ -7,10 +7,17 @@ const mockVoiceServiceInstance = {
   toggleMute: vi.fn(() => false),
   setMuted: vi.fn(),
   toggleDeafen: vi.fn(() => ({ isMuted: false, isDeafened: false })),
+  setNoiseGateEnabled: vi.fn(),
+  setNoiseGateThresholdDb: vi.fn(),
+  setGlobalVoiceVolume: vi.fn(),
+  setUserVolume: vi.fn(),
+  setUserLocalMute: vi.fn(),
+  setOverrideProvider: vi.fn(),
   isMuted: false,
   isDeafened: false,
   onConnectionLost: null as (() => void) | null,
   onError: null as ((message: string) => void) | null,
+  onMicLevel: null as ((db: number) => void) | null,
 };
 
 vi.mock("@/services/voiceService", () => ({
