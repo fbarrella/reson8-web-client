@@ -2,16 +2,33 @@ import { socketService, type ResonSocket } from "@/services/socketService";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useChannelTreeStore } from "@/stores/channelTreeStore";
 import { usePermissionsStore } from "@/stores/permissionsStore";
+import { useChatStore } from "@/stores/chatStore";
+import { useCustomEmojiStore } from "@/stores/customEmojiStore";
 import { toast } from "@/stores/toastStore";
 import { soundAlert } from "@/lib/soundAlert";
 import { isPermissionDeniedMessage } from "@/lib/ackError";
 import * as voiceConnectionService from "@/services/voiceConnectionService";
 import { refreshPermissions } from "@/services/permissionsService";
-import type { ServerToClientEvents } from "@/types/reson8-protocol";
+import type { ServerToClientEvents, IChannelTreeNode } from "@/types/reson8-protocol";
 
 const PING_INTERVAL_MS = 3000;
 
 let cleanupLifecycle: (() => void) | null = null;
+
+/**
+ * `hasUnread` is only reliable on the very first per-socket, join-time tree
+ * — not on later broadcast-triggered updates shared by every recipient
+ * (CLAUDE.md's protocol reference is explicit about this). Hydrate the
+ * chatStore's unread set from it exactly once per connection; every unread
+ * change after that comes from MESSAGE_RECEIVED/MARK_CHANNEL_READ instead
+ * (Phase 4 PRD P4.6).
+ */
+function collectUnreadChannelIds(nodes: IChannelTreeNode[], out: string[]): void {
+  for (const node of nodes) {
+    if (node.hasUnread) out.push(node.id);
+    if (node.children.length > 0) collectUnreadChannelIds(node.children, out);
+  }
+}
 
 function startPingLoop(socket: ResonSocket): () => void {
   const tick = () => {
@@ -31,9 +48,16 @@ function startPingLoop(socket: ResonSocket): () => void {
 
 function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams): () => void {
   const stopPing = startPingLoop(socket);
+  let unreadHydrated = false;
 
   const handleTreeUpdate: ServerToClientEvents["CHANNEL_TREE_UPDATE"] = (payload) => {
     useChannelTreeStore.getState().setTree(payload.tree);
+    if (!unreadHydrated) {
+      unreadHydrated = true;
+      const unreadIds: string[] = [];
+      collectUnreadChannelIds(payload.tree, unreadIds);
+      useChatStore.getState().hydrateInitialUnread(unreadIds);
+    }
   };
   const handlePresenceUpdate: ServerToClientEvents["PRESENCE_UPDATE"] = (payload) => {
     useChannelTreeStore.getState().updatePresence(payload.channelId, payload.occupants);
@@ -44,6 +68,32 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
   };
   const handleChannelDeleted: ServerToClientEvents["CHANNEL_DELETED"] = () => {
     soundAlert.play("channel_deleted");
+  };
+  const handleMessageReceived: ServerToClientEvents["MESSAGE_RECEIVED"] = (message) => {
+    useChatStore.getState().addMessage(message);
+    const { activeChannelId } = useChatStore.getState();
+    const { nickname, selfUserId, setSelfUserId } = useConnectionStore.getState();
+    const isOwnMessage = message.nickname === nickname;
+    if (isOwnMessage && !selfUserId) setSelfUserId(message.userId);
+    if (message.channelId !== activeChannelId && !isOwnMessage) {
+      useChatStore.getState().markUnread(message.channelId);
+    }
+  };
+  const handleMessageEdited: ServerToClientEvents["MESSAGE_EDITED"] = (message) => {
+    useChatStore.getState().updateMessage(message);
+  };
+  const handleMessageDeleted: ServerToClientEvents["MESSAGE_DELETED"] = (payload) => {
+    useChatStore.getState().removeMessage(payload.channelId, payload.messageId);
+  };
+  const handleReactionUpdated: ServerToClientEvents["REACTION_UPDATED"] = (payload) => {
+    if (payload.isDm) return; // DMs are Phase 5's responsibility
+    useChatStore.getState().setReactions(payload.messageId, payload.reactions);
+  };
+  const handleChannelPinUpdated: ServerToClientEvents["CHANNEL_PIN_UPDATED"] = (payload) => {
+    useChatStore.getState().setPinned(payload.channelId, payload.pinnedMessage);
+  };
+  const handleCustomEmojiApproved: ServerToClientEvents["CUSTOM_EMOJI_APPROVED"] = (payload) => {
+    useCustomEmojiStore.getState().upsert(payload.emoji);
   };
   const handleError: ServerToClientEvents["ERROR"] = (payload) => {
     toast({ title: "Server error", description: payload.message, variant: "destructive" });
@@ -78,6 +128,9 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
         // join, if one was active (Phase 2 PRD P2.10).
         voiceConnectionService.rejoinVoiceIfNeeded();
         void refreshPermissions();
+        void socketService.getApprovedEmojis().then((res) => {
+          if (res.success && res.emojis) useCustomEmojiStore.getState().setApprovedList(res.emojis);
+        });
       });
   };
   const handleReconnectFailed = () => {
@@ -93,6 +146,12 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
   socket.on("PRESENCE_UPDATE", handlePresenceUpdate);
   socket.on("CHANNEL_CREATED", handleChannelCreated);
   socket.on("CHANNEL_DELETED", handleChannelDeleted);
+  socket.on("MESSAGE_RECEIVED", handleMessageReceived);
+  socket.on("MESSAGE_EDITED", handleMessageEdited);
+  socket.on("MESSAGE_DELETED", handleMessageDeleted);
+  socket.on("REACTION_UPDATED", handleReactionUpdated);
+  socket.on("CHANNEL_PIN_UPDATED", handleChannelPinUpdated);
+  socket.on("CUSTOM_EMOJI_APPROVED", handleCustomEmojiApproved);
   socket.on("ERROR", handleError);
   socket.on("disconnect", handleDisconnect);
   socket.io.on("reconnect", handleReconnect);
@@ -110,6 +169,12 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
     socket.off("PRESENCE_UPDATE", handlePresenceUpdate);
     socket.off("CHANNEL_CREATED", handleChannelCreated);
     socket.off("CHANNEL_DELETED", handleChannelDeleted);
+    socket.off("MESSAGE_RECEIVED", handleMessageReceived);
+    socket.off("MESSAGE_EDITED", handleMessageEdited);
+    socket.off("MESSAGE_DELETED", handleMessageDeleted);
+    socket.off("REACTION_UPDATED", handleReactionUpdated);
+    socket.off("CHANNEL_PIN_UPDATED", handleChannelPinUpdated);
+    socket.off("CUSTOM_EMOJI_APPROVED", handleCustomEmojiApproved);
     socket.off("ERROR", handleError);
     socket.off("disconnect", handleDisconnect);
     socket.io.off("reconnect", handleReconnect);
@@ -169,9 +234,12 @@ export function connectToServer(params: ConnectParams): Promise<ConnectResult> {
             return;
           }
           cleanupLifecycle = attachLifecycleListeners(socket, params);
-          useConnectionStore.getState().setConnected(ack.serverId ?? "", nickname);
+          useConnectionStore.getState().setConnected(ack.serverId ?? "", nickname, serverUrl);
           soundAlert.play("connected");
           void refreshPermissions();
+          void socketService.getApprovedEmojis().then((res) => {
+            if (res.success && res.emojis) useCustomEmojiStore.getState().setApprovedList(res.emojis);
+          });
           resolve({ success: true });
         });
     };
@@ -191,4 +259,6 @@ export function leaveServer(): void {
   useConnectionStore.getState().reset();
   useChannelTreeStore.getState().reset();
   usePermissionsStore.getState().reset();
+  useChatStore.getState().reset();
+  useCustomEmojiStore.getState().reset();
 }

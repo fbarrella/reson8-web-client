@@ -1,5 +1,13 @@
 import { io, type Socket } from "socket.io-client";
-import type { ClientToServerEvents, ServerToClientEvents, IRole, IUser } from "@/types/reson8-protocol";
+import type {
+  ClientToServerEvents,
+  ServerToClientEvents,
+  IRole,
+  IUser,
+  IMessage,
+  IPinnedMessage,
+  ICustomEmoji,
+} from "@/types/reson8-protocol";
 
 export type ResonSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -197,6 +205,86 @@ class SocketService {
   ): Promise<{ success: boolean; error?: string }> {
     return new Promise((resolve) => {
       this.instance.emit("REORDER_CHANNELS", { parentId, orderedChannelIds }, resolve);
+    });
+  }
+
+  // ── Text chat (Phase 4 PRD P4.2-P4.6) ───────────────────────────────────
+
+  sendMessage(payload: {
+    channelId: string;
+    content: string;
+    attachmentUrl?: string;
+    attachmentPublicId?: string;
+  }): Promise<{ success: boolean; messageId?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("SEND_MESSAGE", payload, resolve);
+    });
+  }
+
+  fetchMessages(payload: {
+    channelId: string;
+    before?: string;
+    limit?: number;
+    aroundMessageId?: string;
+  }): Promise<{ success: boolean; messages?: IMessage[]; pinnedMessage?: IPinnedMessage | null; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("FETCH_MESSAGES", payload, resolve);
+    });
+  }
+
+  markChannelRead(channelId: string): Promise<{ success: boolean }> {
+    return new Promise((resolve) => {
+      this.instance.emit("MARK_CHANNEL_READ", { channelId }, resolve);
+    });
+  }
+
+  deleteMessage(messageId: string): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("DELETE_MESSAGE", { messageId }, resolve);
+    });
+  }
+
+  editMessage(messageId: string, content: string): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("EDIT_MESSAGE", { messageId, content }, resolve);
+    });
+  }
+
+  // ── Reactions / custom emoji (Phase 4 PRD P4.8/P4.9) ────────────────────
+
+  toggleReaction(messageId: string, emoji: string, isDm: boolean): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("TOGGLE_REACTION", { messageId, emoji, isDm }, resolve);
+    });
+  }
+
+  createCustomEmoji(
+    name: string,
+    imageUrl: string,
+    imagePublicId?: string,
+  ): Promise<{ success: boolean; emojiId?: string; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("CREATE_CUSTOM_EMOJI", { name, imageUrl, imagePublicId }, resolve);
+    });
+  }
+
+  getApprovedEmojis(): Promise<{ success: boolean; emojis?: ICustomEmoji[]; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("GET_APPROVED_EMOJIS", resolve);
+    });
+  }
+
+  // ── Pinned messages (Phase 4 PRD P4.11) ─────────────────────────────────
+
+  pinMessage(channelId: string, messageId: string): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("PIN_MESSAGE", { channelId, messageId }, resolve);
+    });
+  }
+
+  unpinMessage(channelId: string): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("UNPIN_MESSAGE", { channelId }, resolve);
     });
   }
 }

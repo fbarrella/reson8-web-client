@@ -1739,3 +1739,393 @@ Feature/Fix: Phase 3 acceptance criteria verification
   volume, channel CRUD/reorder), then begin Phase 4.
 
 === Version bumped to 3.0.0 (16/08/2026) — classification: MAJOR ===
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 4 — foundations (protocol wrappers, uploadService, chatStore, self-identification)
+
+  Problem: Text chat needed a substantial new transport/state layer before
+  any UI could be built: message/reaction/pin/emoji socket wrappers, the
+  two REST upload endpoints (attachments + custom emoji), a way to resolve
+  relative attachment URLs against the connected server's own origin, and
+  a per-channel message/pin/unread store.
+
+  Solution: socketService.ts gained sendMessage/fetchMessages/
+  markChannelRead/deleteMessage/editMessage/toggleReaction/
+  createCustomEmoji/getApprovedEmojis/pinMessage/unpinMessage, following the
+  same thin-wrapper pattern established in Phase 1. New
+  src/services/uploadService.ts does the two REST calls
+  (`POST {base}/api/upload`, `POST {base}/api/upload/emoji`) plus client-side
+  pre-checks (5MB/512KB caps, MIME allowlist) that fail fast with a clear
+  message before any network request fires (P4.4's explicit requirement) —
+  the server remains the real enforcement boundary per master PRD §5.6.
+  connectionStore gained `serverUrl` (the normalized ws(s):// URL used to
+  connect, needed to derive the REST base) and a new
+  `lib/serverUrl.ts:wsUrlToHttpBase()`/`resolveMediaUrl()` pair (swaps the
+  ws(s) scheme for http(s), then resolves a relative attachment/emoji URL
+  against it — CLAUDE.md is explicit the server may return either relative
+  or absolute URLs depending on its own local-disk-vs-Cloudinary config, so
+  this can't assume one or the other). New src/stores/chatStore.ts holds a
+  `Map<channelId, {messages, hasMoreOlder, pinnedMessage, loading}>` plus
+  `openChannelIds` (desktop tabs), `activeChannelId` (gates unread-marking
+  and MARK_CHANNEL_READ — P4.6), `unreadChannelIds`, and
+  `highlightedMessageId` (jump-to-pin's brief highlight, P4.11).
+
+  Self-identification gap (same protocol-gap class as Phase 3's permission
+  self-match): the wire protocol never echoes the caller's own userId
+  anywhere. connectionStore gained `selfUserId`, resolved opportunistically
+  two ways — whichever fires first: (a) permissionsService's existing
+  GET_ALL_USERS nickname self-match now also captures `self.id`; (b) a new
+  connectionService MESSAGE_RECEIVED handler checks
+  `message.nickname === ourNickname` and captures `message.userId` the
+  first time it sees its own message echoed back. (b) is the more broadly
+  reliable path since GET_ALL_USERS may itself be permission-gated for
+  non-admins in a real deployment, while every user eventually sends at
+  least one message. Both MessageRow's own-message styling and
+  ReactionsRow's active-reaction styling fall back to a nickname comparison
+  whenever selfUserId hasn't resolved yet.
+
+  Key Files Modified:
+    src/services/socketService.ts
+    src/services/uploadService.ts (NEW)
+    src/services/permissionsService.ts
+    src/services/connectionService.ts
+    src/stores/connectionStore.ts
+    src/stores/chatStore.ts (NEW)
+    src/lib/serverUrl.ts
+
+  Verification:
+    npm run typecheck / lint / test pass. Covered indirectly by every P4.x
+    item's live verification below; no dedicated unit tests were added for
+    this layer specifically (see the acceptance entry's honest coverage-gap
+    note).
+
+  Next Step: P4.7 — emoji picker (built first since the composer and
+  reactions both depend on it).
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 4 — P4.7/P4.9: Emoji picker, custom emoji crop tool & upload, reactions, link previews, message content parsing
+
+  Problem: The curated emoji picker, custom-emoji upload+crop flow,
+  reactions, `:name:` token rendering, and degraded link previews are all
+  interdependent (the picker is reused for both composer-insertion and
+  reaction-targeting modes; message rendering needs to know which custom
+  emoji names are currently approved) and were built as one connected
+  pass rather than strictly item-by-item.
+
+  Solution: src/features/emoji/emojiData.ts vendors the desktop's curated
+  dataset verbatim (552 entries across the 9 desktop-defined categories,
+  confirmed by count — matches the PRD's "~552" exactly) via a header
+  comment recording source path/commit, same convention as the Phase 1
+  protocol-types vendoring. EmojiPickerContent.tsx renders category tabs +
+  search + grid, with the custom-emoji tab as a *fixed sibling outside* the
+  horizontally-scrolling category row — porting the fix for a real desktop
+  bug (Phase 11 PRD 11.3: a 10th tab hidden inside a scrollable row) rather
+  than copying the original layout and re-fixing it later. EmojiPicker.tsx
+  wraps it in a Popover with an `onPick(token)` callback — deliberately a
+  single Popover-based implementation for both mobile and desktop rather
+  than a distinct bottom-sheet (same simplification already established
+  and documented for Phase 3's OccupantActionsPopover), reused unmodified
+  for both the composer's insert button and ReactionsRow's "add reaction"
+  affordance (reaction-targeting mode is just a different `onPick`).
+
+  CustomEmojiUploadDialog.tsx ports the desktop's exact "cover + pan +
+  zoom" crop math (220px viewport, `baseScale = max(viewport/w,
+  viewport/h)`, zoom 1-3 step 0.01, canvas `drawImage` with a source rect
+  computed back from offset/scale into the image's natural pixel space,
+  128x128 PNG output) — verified against the desktop source directly
+  (`renderer.ts`'s `applyEmojiCropTransform`/`clampEmojiCropOffsets`/the
+  upload-confirm handler) rather than re-derived from scratch. Pan+pinch
+  both drive off one Pointer Events pointer-map (1 active pointer = drag,
+  2 = pinch-zoom via distance ratio) instead of separate touch/mouse code
+  paths. New src/services/emojiService.ts submits the cropped blob via
+  uploadService then CREATE_CUSTOM_EMOJI, optimistically adding a local
+  PENDING entry to customEmojiStore (Phase 4 PRD P4.9's "submitter sees
+  their own pending emoji, grayed out" UX addition) without waiting on a
+  server round trip for data already known locally. New
+  src/stores/customEmojiStore.ts (`Map<name, ICustomEmoji>`) is populated
+  from GET_APPROVED_EMOJIS on connect and kept live via the
+  CUSTOM_EMOJI_APPROVED broadcast handler in connectionService.
+
+  MessageContent.tsx parses message text via a single regex pass
+  (`(https?://...)|(:[a-zA-Z0-9_]{2,32}:)`) into React elements — never
+  string-concatenated HTML, so there's no injection surface by
+  construction (stronger than the desktop's manual escape-or-render
+  branch, per CLAUDE.md's dangerouslySetInnerHTML ban). URL matches
+  auto-link; `:name:` tokens render as an inline `<img>` only when the
+  name is a currently-APPROVED custom emoji, otherwise literal text
+  (Discord/Slack convention, matching desktop). LinkPreviewCard.tsx +
+  lib/linkPreview.ts implement the degraded-scope oEmbed allowlist (master
+  PRD §6): YouTube (desktop-confirmed), plus Vimeo/Spotify/SoundCloud,
+  each verified CORS-open via a live `curl -H "Origin: ..."` check against
+  the real endpoint before being added (CodePen was tried and rejected —
+  403, no CORS header) — not assumed from the oEmbed spec, which doesn't
+  guarantee CORS support per-provider, exactly the risk the PRD flagged.
+  The embed player is a real `<iframe>` built from just the `src` URL
+  extracted out of the provider's `html` field via regex, never the raw
+  HTML string itself — this project never uses dangerouslySetInnerHTML,
+  full stop, not only for message text.
+
+  ReactionsRow.tsx renders tallied pills (active-state styled via the
+  selfUserId-or-nickname fallback above) plus an always-visible
+  dashed-circle "add reaction" button opening the same EmojiPicker.
+
+  Key Files Modified:
+    src/features/emoji/emojiData.ts (NEW)
+    src/features/emoji/EmojiPickerContent.tsx (NEW)
+    src/features/emoji/EmojiPicker.tsx (NEW)
+    src/features/emoji/CustomEmojiUploadDialog.tsx (NEW)
+    src/services/emojiService.ts (NEW)
+    src/stores/customEmojiStore.ts (NEW)
+    src/features/chat/MessageContent.tsx (NEW)
+    src/features/chat/LinkPreviewCard.tsx (NEW)
+    src/features/chat/ReactionsRow.tsx (NEW)
+    src/lib/linkPreview.ts (NEW)
+    src/services/connectionService.ts — CUSTOM_EMOJI_APPROVED/
+      REACTION_UPDATED handlers, GET_APPROVED_EMOJIS on connect
+
+  Verification:
+    npm run typecheck / lint pass. Full live verification detailed in the
+    acceptance entry below — every check in this item's scope passed,
+    including the specific "approved emoji becomes usable in the
+    submitter's own picker without a page reload" acceptance criterion.
+
+  Next Step: P4.1-P4.6, P4.11 — chat navigation, message list, composer,
+  edit/delete, unread indicators, pinned messages.
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 4 — P4.1/P4.2/P4.5/P4.6/P4.11: Chat navigation, message list, edit/delete, unread indicators, pinned messages
+
+  Problem: The core chat surface — navigating into a channel, paginated
+  message history, own-message edit/delete, unread tracking, and pinned
+  messages — needed the mobile nav-stack / desktop-tabs composition the
+  PRD specifies, sharing one `<ChatPane>` component per master PRD's "one
+  component set, three compositions" principle.
+
+  Solution: New src/features/chat/ChatRoute.tsx is the `channels/:channelId`
+  route element (replacing Phase 1's ChannelsPage stub there) — at `base`
+  it's a full-screen header (explicit back button + the browser/OS back
+  gesture, free from using a real route) over `<ChatPane>`; at `lg:` a
+  Radix `<Tabs>` strip (new src/components/ui/tabs.tsx wrapper) lists
+  `chatStore.openChannelIds`, switching tabs navigates via the URL (kept as
+  the single source of truth for "which channel is active" in both
+  compositions — a close button per tab removes it from the open set and,
+  if it was active, navigates to the next open tab or back to `/app`).
+  ChannelTreePanel's click handler now navigates to this route for text
+  channels instead of the Phase 1 "coming soon" toast. New
+  src/features/chat/ChatTabPage.tsx fills the bottom tab bar's "Chat"
+  destination (master PRD §5.1: "badge = total unread") with a flat
+  quick-jump list of unread/open channels — distinct from the channel
+  *tree*, which lives one tab over.
+
+  MessageList.tsx (P4.2) fetches the initial page on mount and loads older
+  history via an IntersectionObserver on a top sentinel, matching the
+  server's cursor contract (`before` = oldest loaded message's id). Scroll
+  position is preserved across a prepend by compensating for the height
+  added above the viewport (record `scrollHeight` before the fetch,
+  add the delta back after); new messages only auto-scroll the view down
+  when the reader was already within 80px of the bottom, so scrolling up
+  to read history is never yanked back down by an incoming message. List
+  items are keyed by `message.id` (stable, virtualization-ready per the
+  PRD's non-hard-requirement note — not implemented this phase).
+
+  Edit/delete (P4.5) live in MessageRow.tsx's kebab menu: Edit only shows
+  when `isOwn && withinEditWindow` (a client-side 2-minute-elapsed check,
+  computed at menu-open time rather than during render — Date.now() is an
+  impure call and React's render body must stay pure, caught by the
+  project's React Compiler lint, not a manual read-through), edit is
+  inline (textarea replacing the message text, Enter commits/Shift+Enter
+  newlines/Escape cancels); Delete is behind a Radix AlertDialog
+  confirmation, never a bare confirm(). Both the kebab (always at least
+  70%-opacity, never hover-only) and a hover-reveal progressive
+  enhancement on pointer-fine devices are present per master PRD §5.1.
+
+  Unread indicators (P4.6): connectionService's MESSAGE_RECEIVED handler
+  marks a channel unread only when `channelId !== activeChannelId` (a
+  desktop tab can be *open* without being the *focused* one — this
+  matters, "not viewing it" is the actual gate) and the message isn't the
+  local user's own (nickname/selfUserId check — ports the desktop's real
+  Phase 10 PRD 10.5 bugfix directly rather than re-discovering it).
+  ChatPane calls MARK_CHANNEL_READ + clears the local unread flag on
+  mount. Deliberately does NOT keep re-syncing from later
+  CHANNEL_TREE_UPDATE broadcasts' `hasUnread` field — CLAUDE.md is explicit
+  that field is only reliable on the very first per-socket join-time tree,
+  so connectionService hydrates chatStore's unread set from *that first
+  tree only* (a `unreadHydrated` flag scoped to the lifecycle-listener
+  closure) and never touches it again from a tree broadcast.
+
+  Pinned messages (P4.11): pin/unpin live in the same MessageRow kebab,
+  shown to *everyone* (not client-side hidden like channel CRUD) since the
+  PRD is explicit this one matches desktop's "server enforces, UI doesn't
+  hide" convention. Pinning over an existing pin shows a replace
+  confirmation. PinnedBar.tsx sits above the message list, tap-to-jump
+  calls the new chatService.jumpToPinnedMessage() (checks the loaded
+  window first, falls back to `FETCH_MESSAGES{aroundMessageId}` and
+  replaces the rendered window if not found — ported 1:1 from desktop
+  Phase 11 PRD 11.5), then scrolls + sets chatStore.highlightedMessageId
+  for a 2s ring-highlight, auto-clearing via setTimeout. CHANNEL_PIN_UPDATED
+  keeps the bar and every message row's pin-button state live, including
+  the auto-unpin-on-delete case (no `actedByNickname` in that payload).
+
+  Key Files Modified:
+    src/features/chat/ChatRoute.tsx (NEW)
+    src/features/chat/ChatPane.tsx (NEW)
+    src/features/chat/ChatTabPage.tsx (NEW)
+    src/features/chat/MessageList.tsx (NEW)
+    src/features/chat/MessageRow.tsx (NEW)
+    src/features/chat/PinnedBar.tsx (NEW)
+    src/components/ui/tabs.tsx (NEW)
+    src/services/chatService.ts (NEW)
+    src/features/channels/ChannelTreePanel.tsx — navigate instead of toast,
+      unread dot now reads chatStore instead of the unreliable
+      node.hasUnread
+    src/app/BottomTabBar.tsx — Chat tab unread badge
+    src/App.tsx — routing
+
+  Verification:
+    npm run typecheck / lint pass. Full live two-client verification in
+    the acceptance entry below.
+
+  Next Step: P4.3/P4.4 — composer & upload feedback.
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 4 — P4.3/P4.4: Composer & instant upload feedback
+
+  Problem: The message composer needed auto-grow, Enter-to-send with a
+  reliable mobile fallback, cursor-aware emoji insertion, and file
+  attachment with instant local feedback before the network request
+  resolves.
+
+  Solution: Composer.tsx's textarea auto-grows via a ref+effect resizing
+  `scrollHeight` (capped at 160px); `Enter` (not Shift+Enter, and not
+  during IME composition — `e.nativeEvent.isComposing` checked explicitly)
+  sends, but an explicit Send button is always rendered too since mobile
+  virtual-keyboard Enter behavior is unreliable across IMEs, per the PRD.
+  The emoji-picker's `onPick` inserts at the textarea's current cursor
+  position (tracked via `selectionStart`/`selectionEnd`) rather than just
+  appending. File attachment: the moment a file is picked, a local
+  thumbnail renders via `URL.createObjectURL` (revoked on removal/replace/
+  unmount) with a spinner, before `uploadAttachment()` resolves — matching
+  the desktop's literal "local thumbnail + spinner appear the moment the
+  file is picked" phrasing. Upload failure shows an inline retry action
+  that re-runs the same upload against the still-held `File` object;
+  success enables Send, which passes the resolved `attachmentUrl`/
+  `attachmentPublicId` through to SEND_MESSAGE.
+
+  Key Files Modified:
+    src/features/chat/Composer.tsx (NEW)
+
+  Verification:
+    npm run typecheck / lint pass. Live-verified: an oversized (5.1MB)
+    file is rejected client-side with a toast and confirmed via a Playwright
+    network listener that *no* `/api/upload` request ever fires — the
+    exact P4.4 acceptance criterion. A real successful small-file upload
+    round trip was exercised indirectly through the custom-emoji upload
+    path (same uploadService, same REST contract) rather than a dedicated
+    attachment-upload test.
+
+  Next Step: Phase 4 acceptance criteria verification, then /bump-version.
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 4 acceptance criteria verification
+
+  Problem: Same rationale as Phases 1-3's acceptance passes — needed one
+  pass checking this phase's actual stated Acceptance Criteria against a
+  running two-client session, and honest reporting on what could/couldn't
+  be verified.
+
+  Solution: Extended the mock Socket.io server (scratchpad-only, never
+  committed) with real SEND_MESSAGE/FETCH_MESSAGES/MARK_CHANNEL_READ/
+  DELETE_MESSAGE/EDIT_MESSAGE/TOGGLE_REACTION/PIN_MESSAGE/UNPIN_MESSAGE/
+  CREATE_CUSTOM_EMOJI/GET_APPROVED_EMOJIS handlers, an Express app (mounted
+  on the same http.Server as Socket.io) implementing real `/api/upload` and
+  `/api/upload/emoji` with in-memory file storage + a `/uploads/:id` GET
+  route so uploaded images actually round-trip and render (not just
+  200-with-a-fake-URL), and a test-only `POST /test/approve-emoji/:name`
+  endpoint standing in for Phase 6's not-yet-built admin approval UI.
+
+  This pass surfaced three genuine bugs, all in the mock server / test
+  script, not the shipped app — worth recording since they cost real
+  debugging time and the fixes are reusable knowledge for future sessions:
+    1. The mock's Express routes had no CORS headers, so the browser
+       blocked every upload fetch cross-origin (preview server on :4173,
+       mock on its own port) with "Failed to fetch" — silently breaking
+       the custom-emoji and attachment upload paths. Added permissive CORS
+       middleware to the mock's Express app; a real reson8 server already
+       handles this for its actual deployment, so this was purely a test-
+       harness gap.
+    2. The mock's TOGGLE_REACTION handler read `info.userId` without
+       checking `info` for undefined, and crashed the *entire* Node
+       process on a rare timing edge case, taking down every other
+       in-flight check in the same run along with it. Added the missing
+       null-check guard.
+    3. `page.goto()` to a same-origin SPA path is still a hard browser
+       navigation, not a client-side route change — it drops the
+       in-memory Socket.io connection exactly like a real page reload does
+       (same lesson already documented in Phase 3's per-user-volume-
+       persistence entry). Fixed by using `page.goBack()` instead, which
+       correctly triggers React Router's own pushState-based history
+       handling without a reload.
+    Also caught two of my own test-locator bugs along the way (a `.last()`
+    textarea locator that grabbed the composer instead of the inline edit
+    box, sending an extra message instead of editing one; and a
+    `title="testmoji"` exact-match selector against a title attribute that
+    was actually `":testmoji: "` with the colons/trailing-space intact) —
+    noted only because the false "Delete doesn't work" signal they
+    produced is exactly the kind of thing worth a beat of skepticism
+    before concluding the app has a bug.
+
+  Final clean run: 31/31 checks passed, zero console/page errors —
+  send/receive/edit/delete across two live clients; a 5.1MB file rejected
+  client-side with zero network requests fired; the custom-emoji tab
+  staying fixed outside the scrollable category row at every check;
+  submit → PENDING (grayed, disabled in the submitter's own picker) →
+  approved via the test endpoint → immediately usable and rendering
+  correctly for the original submitter, no reload; pin, replace-pin
+  (with confirmation), unpin, and auto-unpin-on-delete all updating the
+  pinned bar and message pin-button state live on a second connected
+  client; jump-to-pin via the already-loaded-DOM path (the
+  `aroundMessageId` fallback-fetch path was implemented per the desktop's
+  1:1-ported logic but not separately exercised, since triggering it
+  needs a pin far enough outside the initial 50-message page — not set up
+  in this pass); a YouTube link rendering both the auto-linked hyperlink
+  and an inline oEmbed card; a non-allowlisted URL staying a plain link
+  with no broken preview; unread dots appearing only for a channel the
+  reader isn't actively viewing, never from their own messages, and
+  clearing correctly on open.
+
+  Remaining gaps against the phase's stated Acceptance Criteria, honestly
+  flagged:
+    - Jump-to-pin's `aroundMessageId` fallback-fetch path (target message
+      outside the initially-loaded page) — implemented, not live-verified
+      this pass; only the already-loaded-DOM path was exercised.
+    - No dedicated unit tests were added this phase (33/33 total,
+      unchanged from Phase 3) — the new chat/emoji/upload logic was judged
+      lower-risk to verify via the live two-client Playwright pass above
+      than via injected-state unit tests in the voiceService.test.ts
+      style. Flagged as a real coverage gap, not silently accepted.
+    - Message-list virtualization was not implemented (explicitly not a
+      hard Phase 4 requirement per the PRD) — list items are keyed and
+      structured so it can be added later without a rewrite.
+    - Standing sandbox limitations carried over from Phases 1-3: mobile-
+      safari (webkit) Playwright project still crashes on page.goto in
+      this proot/ARM64 sandbox, unrelated to any Phase 4 code.
+
+  Key Files Modified:
+    (none beyond the P4.x entries above; this entry covers verification
+    tooling only, none of it committed)
+
+  Verification:
+    npm run typecheck / lint / test / build all pass (33/33 unit tests).
+    Live two-client Playwright pass: 31/31 checks, zero console/page
+    errors, detailed above.
+
+  Next Step: Phase 4 complete — run /bump-version (MAJOR, per the PRD:
+  this phase ships new capabilities throughout — chat, uploads, emoji,
+  pins), then begin Phase 5.
+
+=== Version bumped to 4.0.0 (16/08/2026) — classification: MAJOR ===
