@@ -3,7 +3,7 @@ import { MoreVertical, Pencil, Trash2, Pin, PinOff } from "lucide-react";
 
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useChatStore } from "@/stores/chatStore";
-import { editMessage, deleteMessage, pinMessage, unpinMessage } from "@/services/chatService";
+import { editMessage, deleteMessage, pinMessage, unpinMessage, toggleReaction } from "@/services/chatService";
 import { resolveMediaUrl } from "@/lib/serverUrl";
 import { cn } from "@/lib/utils";
 import { MessageContent } from "@/features/chat/MessageContent";
@@ -151,7 +151,7 @@ export function MessageRow({ message, isPinned }: { message: IMessage; isPinned:
           </>
         )}
 
-        <ReactionsRow messageId={message.id} reactions={message.reactions} />
+        <ReactionsRow reactions={message.reactions} onToggle={(token) => void toggleReaction(message.id, token)} />
       </div>
 
       <div className={cn("shrink-0 opacity-70 group-hover:opacity-100", menuOpen && "opacity-100")}>

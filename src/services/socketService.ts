@@ -7,6 +7,8 @@ import type {
   IMessage,
   IPinnedMessage,
   ICustomEmoji,
+  IDirectMessage,
+  IOnlineUser,
 } from "@/types/reson8-protocol";
 
 export type ResonSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -285,6 +287,78 @@ class SocketService {
   unpinMessage(channelId: string): Promise<{ success: boolean; error?: string }> {
     return new Promise((resolve) => {
       this.instance.emit("UNPIN_MESSAGE", { channelId }, resolve);
+    });
+  }
+
+  // ── Direct messages (Phase 5 PRD P5.3-P5.5) ─────────────────────────────
+
+  sendDirectMessage(payload: {
+    recipientId: string;
+    content: string;
+    attachmentUrl?: string;
+    attachmentPublicId?: string;
+  }): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("SEND_DIRECT_MESSAGE", payload, resolve);
+    });
+  }
+
+  fetchDirectMessages(payload: {
+    partnerId: string;
+    before?: string;
+    limit?: number;
+  }): Promise<{ success: boolean; messages?: IDirectMessage[]; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("FETCH_DIRECT_MESSAGES", payload, resolve);
+    });
+  }
+
+  deleteDirectMessage(dmId: string): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("DELETE_DIRECT_MESSAGE", { dmId }, resolve);
+    });
+  }
+
+  getOnlineUsers(): Promise<{ success: boolean; users?: IOnlineUser[]; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("GET_ONLINE_USERS", resolve);
+    });
+  }
+
+  markDmsRead(partnerId: string): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("MARK_DMS_READ", { partnerId }, resolve);
+    });
+  }
+
+  getUnreadDmPartners(): Promise<{
+    success: boolean;
+    partners?: { partnerId: string; partnerNickname: string; unreadCount: number }[];
+    error?: string;
+  }> {
+    return new Promise((resolve) => {
+      this.instance.emit("GET_UNREAD_DM_PARTNERS", resolve);
+    });
+  }
+
+  // ── Nudge (Phase 5 PRD P5.6) ─────────────────────────────────────────────
+
+  nudgeUser(targetUserId: string): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("NUDGE_USER", { targetUserId }, resolve);
+    });
+  }
+
+  getServerSettings(): Promise<{ success: boolean; nudgeEnabled?: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("GET_SERVER_SETTINGS", resolve);
+    });
+  }
+
+  /** Requires ADMIN — writable surface ships in Phase 6; the wrapper lives here since it's part of the same event family. */
+  updateServerSettings(nudgeEnabled: boolean): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("UPDATE_SERVER_SETTINGS", { nudgeEnabled }, resolve);
     });
   }
 }

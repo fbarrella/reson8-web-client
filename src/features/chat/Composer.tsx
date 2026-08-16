@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { Send, Paperclip, X, RotateCw, Loader2 } from "lucide-react";
 
 import { useConnectionStore } from "@/stores/connectionStore";
-import { sendMessage } from "@/services/chatService";
 import { uploadAttachment, validateAttachmentFile, type UploadResult } from "@/services/uploadService";
 import { toast } from "@/stores/toastStore";
 import { EmojiPicker } from "@/features/emoji/EmojiPicker";
@@ -21,8 +20,15 @@ interface PendingAttachment {
  * Enter behavior is unreliable across IMEs (Phase 4 PRD P4.3). File
  * attachment feedback is instant — a local thumbnail + spinner appear the
  * moment the file is picked, before the network request resolves (P4.4).
+ *
+ * Reused as-is for DM composition (Phase 5 PRD P5.3) via the `onSend`
+ * callback — this component owns no channel/DM-specific state itself.
  */
-export function Composer({ channelId }: { channelId: string }) {
+export function Composer({
+  onSend,
+}: {
+  onSend: (content: string, attachmentUrl?: string, attachmentPublicId?: string) => Promise<boolean>;
+}) {
   const serverUrl = useConnectionStore((s) => s.serverUrl);
   const [text, setText] = useState("");
   const [attachment, setAttachment] = useState<PendingAttachment | null>(null);
@@ -96,7 +102,7 @@ export function Composer({ channelId }: { channelId: string }) {
     if (attachment && attachment.status !== "done") return;
 
     setSending(true);
-    const success = await sendMessage(channelId, trimmed, attachment?.result?.url, attachment?.result?.publicId);
+    const success = await onSend(trimmed, attachment?.result?.url, attachment?.result?.publicId);
     setSending(false);
     if (success) {
       setText("");

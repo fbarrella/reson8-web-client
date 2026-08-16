@@ -2129,3 +2129,289 @@ Feature/Fix: Phase 4 acceptance criteria verification
   pins), then begin Phase 5.
 
 === Version bumped to 4.0.0 (16/08/2026) — classification: MAJOR ===
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 5 — Foundations: DM/nudge protocol wrappers, dmStore, serverSettingsStore, deviceAlerts
+
+  Problem: Phase 5 (Direct Messages & Social) needed the same
+  foundations-first treatment Phase 4 used for chat: typed socketService
+  wrappers for the DM/nudge/server-settings event family, a Zustand store
+  shaped for per-partner message caches + online status, a place to hold
+  the server-scoped (not user-scoped) `nudgeEnabled` flag, and feature-
+  detected best-effort wrappers around the Vibration/Badging APIs.
+
+  Solution: socketService.ts gained sendDirectMessage/fetchDirectMessages/
+  deleteDirectMessage/getOnlineUsers/markDmsRead/getUnreadDmPartners/
+  nudgeUser/getServerSettings/updateServerSettings, all thin Promise-
+  wrapped emits matching the existing pattern (updateServerSettings is
+  wired now even though its admin UI ships in Phase 6, since it's part of
+  the same event family). dmStore.ts mirrors chatStore.ts's shape
+  (conversations Map keyed by partnerId, hasMoreOlder/loading per
+  conversation) rather than sharing a generic module with it — DMs carry
+  read receipts and no pin/edit concept, channels carry the reverse, and
+  the two diverging enough made a forced shared abstraction riskier than
+  two structurally-similar files (a judgment call against the PRD's own
+  "consider sharing" suggestion, not a silent drift from it). Also holds
+  a `partners` directory (nickname/online/unread) and a one-shot
+  `pendingAutoOpenPartnerId` consumed by AppShell for the mobile auto-
+  navigate case. serverSettingsStore.ts holds `nudgeEnabled` (default
+  true until the first GET_SERVER_SETTINGS response, so the action
+  doesn't flash-hide). lib/deviceAlerts.ts wraps `navigator.vibrate` /
+  `navigator.setAppBadge` / `clearAppBadge`, every call feature-detected
+  and silently no-op on unsupported platforms (iOS Safari lacks both),
+  per the PRD's explicit "never surface a not-supported error" note.
+
+  Key Files Modified:
+    src/services/socketService.ts
+    src/stores/dmStore.ts (NEW)
+    src/stores/serverSettingsStore.ts (NEW)
+    src/lib/deviceAlerts.ts (NEW)
+
+  Verification:
+    npm run typecheck passes.
+
+  Next Step: Generalize Composer/ReactionsRow for DM reuse, then build
+  dmService and wire connectionService's DM/nudge/presence handlers.
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 5 — Reused Phase 4 components; dmService; connectionService wiring
+
+  Problem: The PRD explicitly calls for reusing Phase 4's
+  <ChatPane>-family components in a DM mode rather than rebuilding them,
+  and DM real-time events (message received/deleted, reactions with
+  isDm=true, nudges, presence, server settings) needed the same
+  lifecycle-listener treatment connectionService already gives channel
+  events.
+
+  Solution: Composer.tsx now takes an `onSend(content, url?, publicId?)`
+  callback instead of a hardcoded channelId + chatService call — ChatPane
+  wraps it for channels, DmPane wraps it for DMs, and the component itself
+  owns no channel/DM-specific state. ReactionsRow.tsx similarly takes an
+  `onToggle(token)` callback instead of calling chatService directly;
+  MessageRow passes chatService's toggleReaction, DmMessageRow passes
+  dmService's (isDm=true) version. dmService.ts adds loadInitialDms/
+  loadOlderDms/sendDirectMessage/deleteDirectMessage/toggleReaction/
+  markDmsRead/loadOnlineUsers/nudgeUser, mirroring chatService's shape.
+  connectionService.ts now handles DIRECT_MESSAGE_RECEIVED (self-
+  identifies via nickname match exactly like Phase 4's MESSAGE_RECEIVED
+  handler, routes into the correct conversation by comparing senderId/
+  receiverId against self, marks unread + plays hey_wake_up only when the
+  conversation isn't the active one), DIRECT_MESSAGE_DELETED (searches
+  every open conversation for the message the same way chatStore's
+  setReactions cross-searches channels, since the broadcast carries only
+  a dmId), REACTION_UPDATED (now branches on `isDm` into dmStore or
+  chatStore instead of the Phase 4 placeholder that just returned early),
+  NUDGE_RECEIVED, SERVER_SETTINGS_UPDATED, and USER_JOINED/USER_LEFT
+  (previously received by no handler at all — now feed dmStore's online-
+  status directory). GET_SERVER_SETTINGS and GET_UNREAD_DM_PARTNERS are
+  fetched right after every successful join/reconnect, mirroring the
+  existing GET_APPROVED_EMOJIS pattern.
+
+  A real protocol gap surfaced while building read receipts: reading
+  ../reson8/apps/server/src/handlers/dm.handler.ts confirmed
+  MARK_DMS_READ only acks the caller — it never notifies the sender that
+  their message was read. There is no live push for "your message was
+  just read," and the desktop reference client doesn't render a read
+  receipt at all (readAt is used there only to compute the DM unread
+  badge, never displayed). Rather than inventing a fake server event or
+  polling on a timer, dmService.refreshReadReceipts() re-fetches and
+  merges readAt onto already-loaded messages, triggered from
+  connectionService whenever the active conversation's partner sends a
+  new message — a strong, event-driven signal they were just present,
+  covering the common "both people actively chatting" case without
+  fabricating protocol behavior that doesn't exist.
+
+  Key Files Modified:
+    src/features/chat/Composer.tsx
+    src/features/chat/ChatPane.tsx
+    src/features/chat/ReactionsRow.tsx
+    src/features/chat/MessageRow.tsx
+    src/services/dmService.ts (NEW)
+    src/services/connectionService.ts
+
+  Verification:
+    npm run typecheck passes.
+
+  Next Step: Build the DM navigation shell (P5.1/P5.2), then the
+  messaging pane (P5.3-P5.5) and Nudge (P5.6).
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 5 — P5.1/P5.2: DM navigation, conversation list, Online Users directory
+
+  Problem: Needed the same nav-stack/tabs composition Phase 4 used for
+  channels (mobile full-screen destination + desktop tabs strip), a
+  GET_ONLINE_USERS-backed directory to start new conversations (including
+  offline previously-contacted partners, per the protocol's own
+  IOnlineUser contract), and connect-time GET_UNREAD_DM_PARTNERS
+  hydration with platform-appropriate auto-open behavior.
+
+  Solution: DmRoute.tsx mirrors ChatRoute.tsx almost exactly — mobile
+  header with back button, `lg:` Tabs strip over dmStore.openPartnerIds —
+  kept as a visually separate strip from the channel tabs rather than
+  merged into one bar, since they live on different route namespaces
+  (`/app/channels/:id` vs `/app/dms/:partnerId`); a reasonable
+  implementation-detail call the PRD explicitly leaves open, not a
+  parity requirement. DmsListPage.tsx is the mobile DMs-tab destination
+  (flat list of known partners with online dot + unread badge) plus the
+  entry point to OnlineUsersDialog.tsx (GET_ONLINE_USERS on open, tap to
+  navigate into /app/dms/:userId). connectionService's
+  hydrateUnreadDmPartners() populates dmStore on every connect/reconnect
+  and opens a tab per unread partner regardless of platform (harmless on
+  mobile — DmsListPage just shows it); additionally, when exactly one
+  unread partner exists AND `window.matchMedia("(max-width: 1023.98px)")`
+  matches, it sets dmStore.pendingAutoOpenPartnerId, which a new effect in
+  AppShell.tsx consumes once to navigate and then clears — kept as a
+  React-idiomatic effect rather than a bare `window.history` call from
+  outside the component tree, since this app has no exported navigate
+  singleton (ConnectScreen's own post-connect navigate() already
+  establishes that navigation is the calling component's job, not
+  connectionService's).
+
+  A real gap surfaced while wiring this up, not just a test artifact:
+  BottomTabBar (and therefore the only existing way to reach `/app/dms`)
+  is `lg:hidden`, and nothing else linked to DMs on desktop — Phase 4's
+  ChatTabPage has the same property but that's fine there, since desktop
+  always has the channel tree visible as its entry point; DMs has no
+  desktop-persistent-pane equivalent. Fixed by adding a persistent Mail
+  icon (with its own unread dot) to AppHeader, which renders at every
+  breakpoint — this is desktop's actual entry point into DMs, not the
+  tabs strip.
+
+  Key Files Modified:
+    src/features/dm/DmRoute.tsx (NEW)
+    src/features/dm/DmsListPage.tsx (NEW)
+    src/features/dm/OnlineUsersDialog.tsx (NEW)
+    src/app/AppHeader.tsx
+    src/app/AppShell.tsx
+    src/app/BottomTabBar.tsx
+    src/App.tsx
+
+  Verification:
+    npm run typecheck / lint pass (one lint error caught and fixed:
+    OnlineUsersDialog originally called setLoading(true) synchronously at
+    the top of an effect body on `open` — react-hooks/set-state-in-effect
+    — fixed the same way LinkPreviewCard was fixed in Phase 4: extracted
+    an OnlineUsersList child rendered only while `open`, so its `loading`
+    state starts fresh via useState's initial value on mount instead of
+    an imperative reset).
+
+  Next Step: Build the DM messaging pane (P5.3-P5.5).
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 5 — P5.3/P5.4/P5.5: DM messaging pane, read receipts, Nudge
+
+  Problem: Needed the actual conversation UI (delete-only, no edit — the
+  protocol has no EDIT_DIRECT_MESSAGE event, confirmed against the frozen
+  contract), persistent history with an offline partner, a read-receipt
+  indicator, and the Nudge attention-getting feature with its
+  server-wide enable toggle and 30s cooldown.
+
+  Solution: DmPane.tsx mirrors ChatPane.tsx (mount sets activePartner +
+  calls markDmsRead, unmount clears it if still active), rendering a
+  DmPartnerBar (online dot + nickname + NudgeButton) above the reused
+  DmMessageList/DmMessageRow. DmMessageList.tsx mirrors MessageList.tsx's
+  scroll/pagination logic 1:1, sourced from dmStore instead of chatStore,
+  and additionally computes which message is the conversation's last own
+  one (for the read-receipt label) in a single backward pass rather than
+  per-row. DmMessageRow.tsx reuses MessageContent/LinkPreviewCard/the
+  now-generalized ReactionsRow, but drops MessageRow's edit affordance
+  and pin button entirely (protocol has neither for DMs) and adds a
+  "Sent"/"Read" label under the sender's own last message, driven by
+  dmStore's mergeReadReceipts (see the read-receipt gap noted in the
+  Foundations/wiring entry above). NudgeButton.tsx hides itself entirely
+  when serverSettingsStore.nudgeEnabled is false; a local 30s disabled
+  state is UX-only — the real enforcement is the server's ack rejection,
+  and the client resets its own disabled state immediately on a rejected
+  ack rather than trusting the client-side timer to match the server's.
+
+  Key Files Modified:
+    src/features/dm/DmPane.tsx (NEW)
+    src/features/dm/DmMessageList.tsx (NEW)
+    src/features/dm/DmMessageRow.tsx (NEW)
+    src/features/dm/NudgeButton.tsx (NEW)
+
+  Verification:
+    npm run typecheck / lint pass.
+
+  Next Step: Full Phase 5 acceptance criteria verification, then
+  /bump-version.
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 5 acceptance criteria verification
+
+  Problem: Same rationale as every prior phase's acceptance pass — needed
+  one live, two-(plus)-client check against the phase's actual stated
+  Acceptance Criteria, not just typecheck/lint/unit-test green.
+
+  Solution: Extended the scratchpad mock server (never committed) with
+  SEND_DIRECT_MESSAGE/FETCH_DIRECT_MESSAGES/DELETE_DIRECT_MESSAGE/
+  GET_ONLINE_USERS/MARK_DMS_READ/GET_UNREAD_DM_PARTNERS/NUDGE_USER
+  (30s cooldown enforced server-side)/GET_SERVER_SETTINGS/
+  UPDATE_SERVER_SETTINGS, USER_JOINED/USER_LEFT broadcasts (the mock
+  never emitted these before — a real gap in Phase 1-4's mock, not
+  previously needed), and a TOGGLE_REACTION branch keyed on `isDm`. Ran
+  a 15-check Playwright pass covering: Online-Users-to-new-conversation,
+  real-time DM delivery + unread badge, live reactions and delete syncing
+  to the other participant, Nudge (toast + server-ack-level 30s cooldown
+  rejection verified independently via two raw socket.io-client
+  connections bypassing the UI entirely, and server-wide disable hiding
+  the action live), persistent history + an offline-status dot for a
+  partner who has fully disconnected, the read-receipt approximation
+  described above, and the mobile single-unread-partner auto-navigate
+  path (using a real second browser context with a pre-seeded
+  `reson8-instance-id` so its resulting userId could be computed and
+  messaged ahead of its first connect).
+
+  Two real application bugs were caught and fixed during this pass (both
+  already folded into the entries above, noted here for the record):
+  the missing desktop entry point into DMs (AppHeader), and the
+  set-state-in-effect lint error in OnlineUsersDialog. One test-script
+  bug was caught and fixed along the way: the mobile auto-navigate check
+  initially asserted the wrong target userId (Eve's own ID instead of
+  the partner's — Frank's), which produced a misleading FAIL even though
+  the app's behavior was already correct; worth noting only because it's
+  the same category of false-negative Phase 4's postmortem flagged
+  (confirm the test's assumption before concluding the app is wrong).
+
+  Final clean run: 15/15 checks passed, zero console/page errors.
+
+  Remaining gaps against the phase's stated Acceptance Criteria, honestly
+  flagged:
+    - Read receipts are not truly live-push (no such server event exists
+      — see the Foundations/wiring entry's protocol-gap note); verified
+      only the event-driven approximation's common-case trigger (partner
+      replies while the conversation is open), not an idle-then-poll
+      scenario, since none exists to test.
+    - No dedicated unit tests were added this phase, consistent with
+      Phase 4's same call — the new DM/nudge logic was judged lower-risk
+      to verify via the live multi-client Playwright pass above.
+    - First-contact-requires-both-online-once (a server/data-model
+      property per the PRD, not a client behavior) was not separately
+      exercised — every conversation in this pass was seeded by a
+      SEND_DIRECT_MESSAGE that always succeeds against the mock
+      regardless of recipient connection state, which doesn't actually
+      exercise that server-side constraint.
+    - Standing sandbox limitation carried over from Phases 1-4: webkit
+      Playwright project still crashes on page.goto in this proot/ARM64
+      sandbox, unrelated to any Phase 5 code.
+
+  Key Files Modified:
+    (none beyond the P5.x entries above; this entry covers verification
+    tooling only, none of it committed)
+
+  Verification:
+    npm run typecheck / lint / test / build all pass (33/33 unit tests,
+    unchanged count — no new unit tests this phase, see gap above).
+    Live multi-client Playwright pass: 15/15 checks, zero console/page
+    errors, detailed above.
+
+  Next Step: Phase 5 complete — run /bump-version (MAJOR, per the PRD:
+  this phase ships new capabilities throughout — DMs, online users,
+  read receipts, Nudge).
+
+=== Version bumped to 5.0.0 (16/08/2026) — classification: MAJOR ===
