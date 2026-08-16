@@ -8,7 +8,7 @@ Reson8 Web Client is a **mobile-first, fully responsive Progressive Web App** cl
 
 **Current status: Phase 1 in progress.** Read `app-planning/00-master-prd.md` first, then the phase PRD (`app-planning/0N-phase*.md`) relevant to the work at hand, before writing any code. The phase PRDs are sequential and each depends on the ones before it (see the master PRD's Phase Map).
 
-**Current version: 5.0.0** (Phase 5 complete — MAJOR bump per the policy below, since the phase shipped new capabilities throughout) — see "Versioning" below. Keep this line current as `/bump-version` runs (that's the whole point of it).
+**Current version: 6.0.0** (Phase 6 complete — MAJOR bump per the policy below, since the phase shipped new capabilities throughout) — see "Versioning" below. Keep this line current as `/bump-version` runs (that's the whole point of it).
 
 This project is **client-only**: it never modifies the `reson8` server, its database schema, or its Socket.io protocol. Confirmed non-goals (see master PRD §7): no server-side changes, no background push notifications, no native app-store wrapper, no offline message queue.
 

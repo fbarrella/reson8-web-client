@@ -16,6 +16,13 @@ let voiceRejoinInFlight = false;
  *  every PRESENCE_UPDATE to fire exactly one join/leave sound per event,
  *  never per-user (Phase 2 PRD P2.12). */
 let previousOccupantIds = new Set<string>();
+/** Populated by CHANNEL_USER_KICKED just before the PRESENCE_UPDATE that
+ *  reflects the same departure arrives — lets the presence-diff handler
+ *  suppress the generic "user left" sound for a kicked departure, matching
+ *  the server's own "so they can suppress the presence-based leave sound"
+ *  comment (Phase 6 PRD P6.4). Cleared after every presence diff — it's
+ *  only meant to bridge the two back-to-back events, not persist. */
+const recentlyKickedUserIds = new Set<string>();
 
 function wireVoiceServiceCallbacks(vs: VoiceService): void {
   vs.onConnectionLost = () => {
@@ -314,6 +321,32 @@ export const handleVoiceSessionLost: ServerToClientEvents["VOICE_SESSION_LOST"] 
 };
 
 /**
+ * Delivered to the kicked user themselves (Phase 6 PRD P6.4). The server
+ * has already torn down its side (mediasoup session, presence, room) —
+ * this reuses the same local-cleanup primitives leaveVoiceChannel() uses
+ * for a normal leave, but skips leaveVoiceChannel()'s own
+ * USER_LEAVE_CHANNEL emit (redundant — the server already left us) and its
+ * "leaving-channel" sound (would double up with you_were_kicked_from_channel
+ * for what's really one event).
+ */
+export const handleUserKicked: ServerToClientEvents["USER_KICKED"] = (payload) => {
+  const { currentChannelId } = useVoiceStore.getState();
+  if (currentChannelId !== payload.channelId) return;
+  voiceService?.cleanup();
+  voiceService = null;
+  previousOccupantIds = new Set();
+  useVoiceStore.getState().reset();
+  toast({ title: "You were kicked from the channel", variant: "destructive" });
+  soundAlert.play("you_were_kicked_from_channel");
+};
+
+/** Broadcast to the channel's remaining occupants when someone else is kicked (Phase 6 PRD P6.4). */
+export const handleChannelUserKicked: ServerToClientEvents["CHANNEL_USER_KICKED"] = (payload) => {
+  recentlyKickedUserIds.add(payload.userId);
+  soundAlert.play("user_kicked_from_channel");
+};
+
+/**
  * Sources the voice session timer's start time and fires join/leave sound
  * cues, both scoped to the channel the local user is currently in (Phase 2
  * PRD P2.9 / P2.12). Called from connectionService's existing
@@ -329,10 +362,13 @@ export const handlePresenceUpdateForVoice: ServerToClientEvents["PRESENCE_UPDATE
 
   const nextOccupantIds = new Set(payload.occupants.map((o) => o.userId));
   const hadJoins = [...nextOccupantIds].some((id) => !previousOccupantIds.has(id));
-  const hadLeaves = [...previousOccupantIds].some((id) => !nextOccupantIds.has(id));
+  const departedIds = [...previousOccupantIds].filter((id) => !nextOccupantIds.has(id));
+  const hadLeaves = departedIds.length > 0;
+  const leaveWasKickOnly = hadLeaves && departedIds.every((id) => recentlyKickedUserIds.has(id));
   if (previousOccupantIds.size > 0 || nextOccupantIds.size > 0) {
     if (hadJoins) soundAlert.play("user_joined_channel");
-    if (hadLeaves) soundAlert.play("user_disconnected_from_channel");
+    if (hadLeaves && !leaveWasKickOnly) soundAlert.play("user_disconnected_from_channel");
   }
+  recentlyKickedUserIds.clear();
   previousOccupantIds = nextOccupantIds;
 };

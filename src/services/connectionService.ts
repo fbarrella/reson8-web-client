@@ -6,6 +6,7 @@ import { useChatStore } from "@/stores/chatStore";
 import { useCustomEmojiStore } from "@/stores/customEmojiStore";
 import { useDmStore } from "@/stores/dmStore";
 import { useServerSettingsStore } from "@/stores/serverSettingsStore";
+import { useAdminStore } from "@/stores/adminStore";
 import { toast } from "@/stores/toastStore";
 import { soundAlert } from "@/lib/soundAlert";
 import { isPermissionDeniedMessage } from "@/lib/ackError";
@@ -34,6 +35,23 @@ function collectUnreadChannelIds(nodes: IChannelTreeNode[], out: string[]): void
     if (node.hasUnread) out.push(node.id);
     if (node.children.length > 0) collectUnreadChannelIds(node.children, out);
   }
+}
+
+/**
+ * The server returns exactly one generic ack error string — "Invalid server
+ * password" — for both a missing and an incorrect password (confirmed
+ * against ../reson8/apps/server/src/handlers/connection.handler.ts; there
+ * is no server-side distinction to relay). Phase 6 PRD P6.6 still wants a
+ * distinguishable, accurate message, so this is resolved client-side using
+ * what *we* actually submitted: an empty password against that specific
+ * error means the server needs one we didn't provide; a non-empty one means
+ * it was simply wrong.
+ */
+function resolveJoinErrorMessage(ackError: string | undefined, password: string | undefined): string {
+  if (ackError === "Invalid server password") {
+    return password ? "Incorrect password." : "This server requires a password.";
+  }
+  return ackError ?? "Couldn't connect to the server.";
 }
 
 function currentUnreadDmTotal(): number {
@@ -194,6 +212,14 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
   const handleUserLeft: ServerToClientEvents["USER_LEFT"] = (payload) => {
     useDmStore.getState().setOnline(payload.userId, false);
   };
+  /** Delivered to the banned user's own socket right before the server force-
+   *  disconnects it (Phase 6 PRD P6.5). Sets a definitive terminal error so
+   *  RequireConnection bounces to /connect with a distinguishable message,
+   *  rather than the generic reconnect-loop handleDisconnect would otherwise
+   *  kick off — see the "status === error" guard added there. */
+  const handleUserBanned: ServerToClientEvents["USER_BANNED"] = () => {
+    useConnectionStore.getState().setError("You have been banned from this server.");
+  };
   const handleError: ServerToClientEvents["ERROR"] = (payload) => {
     toast({ title: "Server error", description: payload.message, variant: "destructive" });
     if (isPermissionDeniedMessage(payload.code) || isPermissionDeniedMessage(payload.message)) {
@@ -202,6 +228,7 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
   };
   const handleDisconnect = (reason: string) => {
     if (reason === "io client disconnect") return;
+    if (useConnectionStore.getState().status === "error") return; // e.g. USER_BANNED already set a definitive message
     useConnectionStore.getState().setStatus("reconnecting");
     soundAlert.play("disconnected");
   };
@@ -217,7 +244,7 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
       })
       .then((ack) => {
         if (!ack.success) {
-          useConnectionStore.getState().setError(ack.error ?? "Could not rejoin the server.");
+          useConnectionStore.getState().setError(resolveJoinErrorMessage(ack.error, joinParams.password));
           socketService.disconnect();
           return;
         }
@@ -260,6 +287,7 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
   socket.on("SERVER_SETTINGS_UPDATED", handleServerSettingsUpdated);
   socket.on("USER_JOINED", handleUserJoined);
   socket.on("USER_LEFT", handleUserLeft);
+  socket.on("USER_BANNED", handleUserBanned);
   socket.on("ERROR", handleError);
   socket.on("disconnect", handleDisconnect);
   socket.io.on("reconnect", handleReconnect);
@@ -269,6 +297,8 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
   socket.on("EXISTING_PRODUCERS", voiceConnectionService.handleExistingProducers);
   socket.on("ACTIVE_SPEAKERS", voiceConnectionService.handleActiveSpeakers);
   socket.on("VOICE_SESSION_LOST", voiceConnectionService.handleVoiceSessionLost);
+  socket.on("USER_KICKED", voiceConnectionService.handleUserKicked);
+  socket.on("CHANNEL_USER_KICKED", voiceConnectionService.handleChannelUserKicked);
   document.addEventListener("visibilitychange", handleVisibilityChange);
 
   return () => {
@@ -289,6 +319,7 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
     socket.off("SERVER_SETTINGS_UPDATED", handleServerSettingsUpdated);
     socket.off("USER_JOINED", handleUserJoined);
     socket.off("USER_LEFT", handleUserLeft);
+    socket.off("USER_BANNED", handleUserBanned);
     socket.off("ERROR", handleError);
     socket.off("disconnect", handleDisconnect);
     socket.io.off("reconnect", handleReconnect);
@@ -298,6 +329,8 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
     socket.off("EXISTING_PRODUCERS", voiceConnectionService.handleExistingProducers);
     socket.off("ACTIVE_SPEAKERS", voiceConnectionService.handleActiveSpeakers);
     socket.off("VOICE_SESSION_LOST", voiceConnectionService.handleVoiceSessionLost);
+    socket.off("USER_KICKED", voiceConnectionService.handleUserKicked);
+    socket.off("CHANNEL_USER_KICKED", voiceConnectionService.handleChannelUserKicked);
     document.removeEventListener("visibilitychange", handleVisibilityChange);
   };
 }
@@ -341,7 +374,7 @@ export function connectToServer(params: ConnectParams): Promise<ConnectResult> {
         .joinServer({ nickname, instanceId, password: password || undefined })
         .then((ack) => {
           if (!ack.success) {
-            const message = ack.error ?? "Incorrect password.";
+            const message = resolveJoinErrorMessage(ack.error, password);
             useConnectionStore.getState().setError(message);
             socketService.disconnect();
             resolve({ success: false, error: message });
@@ -379,5 +412,6 @@ export function leaveServer(): void {
   useCustomEmojiStore.getState().reset();
   useDmStore.getState().reset();
   useServerSettingsStore.getState().reset();
+  useAdminStore.getState().reset();
   clearAppBadge();
 }
