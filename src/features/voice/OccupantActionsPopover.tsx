@@ -1,21 +1,32 @@
-import { MoreVertical, Volume2, VolumeX } from "lucide-react";
+import { MoreVertical, Volume2, VolumeX, UserX } from "lucide-react";
 
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { useVoiceStore, readUserOverride } from "@/stores/voiceStore";
+import { useHasPermission } from "@/stores/permissionsStore";
 import { setUserVolume, setUserLocalMute } from "@/services/voiceConnectionService";
+import { kickUser } from "@/services/adminService";
+import { PermissionFlags } from "@/types/reson8-protocol";
 
 /**
  * Touch replacement for the desktop's right-click-on-occupant menu (Phase 3
  * PRD P3.2) — kebab-triggered, containing a volume slider (0-200%) and a
  * Mute Locally toggle. Client-local only, never transmitted to the server.
- * Built as a plain conditionally-rendered action list (not a hardcoded
- * two-item layout) so Phase 6 can drop a "Kick from Channel" action in here
- * without restructuring this component.
+ * "Kick from Channel" (Phase 6 PRD P6.4) is the action slot this component
+ * was originally built to accept without restructuring.
  */
-export function OccupantActionsPopover({ userId, nickname }: { userId: string; nickname: string }) {
+export function OccupantActionsPopover({
+  userId,
+  nickname,
+  channelId,
+}: {
+  userId: string;
+  nickname: string;
+  channelId: string;
+}) {
   const override = useVoiceStore((s) => s.userOverrides.get(userId)) ?? readUserOverride(userId);
+  const canKick = useHasPermission(PermissionFlags.KICK_USER);
 
   return (
     <Popover>
@@ -63,6 +74,18 @@ export function OccupantActionsPopover({ userId, nickname }: { userId: string; n
             </>
           )}
         </Button>
+
+        {canKick && (
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            className="mt-2 w-full"
+            onClick={() => void kickUser(userId, channelId)}
+          >
+            <UserX className="size-4" /> Kick from Channel
+          </Button>
+        )}
       </PopoverContent>
     </Popover>
   );

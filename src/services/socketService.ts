@@ -9,6 +9,7 @@ import type {
   ICustomEmoji,
   IDirectMessage,
   IOnlineUser,
+  IBannedUser,
 } from "@/types/reson8-protocol";
 
 export type ResonSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -359,6 +360,67 @@ class SocketService {
   updateServerSettings(nudgeEnabled: boolean): Promise<{ success: boolean; error?: string }> {
     return new Promise((resolve) => {
       this.instance.emit("UPDATE_SERVER_SETTINGS", { nudgeEnabled }, resolve);
+    });
+  }
+
+  // ── Roles / admin (Phase 6 PRD P6.1) — requires MANAGE_ROLES ───────────
+
+  getRoles(serverId: string): Promise<{ success: boolean; roles?: IRole[]; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("GET_ROLES", { serverId }, resolve);
+    });
+  }
+
+  assignRole(
+    userId: string,
+    roleId: string,
+    action: "add" | "remove",
+  ): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("ASSIGN_ROLE", { userId, roleId, action }, resolve);
+    });
+  }
+
+  // ── Moderation (Phase 6 PRD P6.4/P6.5) ──────────────────────────────────
+
+  kickUser(userId: string, channelId: string): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("KICK_USER", { userId, channelId }, resolve);
+    });
+  }
+
+  banUser(userId: string): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("BAN_USER", { userId }, resolve);
+    });
+  }
+
+  unbanUser(userId: string): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("UNBAN_USER", { userId }, resolve);
+    });
+  }
+
+  getBannedUsers(): Promise<{ success: boolean; users?: IBannedUser[]; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("GET_BANNED_USERS", resolve);
+    });
+  }
+
+  // ── Custom emoji review (Phase 6 PRD P6.2) — requires MANAGE_EMOJIS ────
+
+  getPendingEmojis(): Promise<{ success: boolean; emojis?: ICustomEmoji[]; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("GET_PENDING_EMOJIS", resolve);
+    });
+  }
+
+  reviewCustomEmoji(
+    emojiId: string,
+    decision: "APPROVED" | "REJECTED",
+  ): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("REVIEW_CUSTOM_EMOJI", { emojiId, decision }, resolve);
     });
   }
 }

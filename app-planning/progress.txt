@@ -2415,3 +2415,336 @@ Feature/Fix: Phase 5 acceptance criteria verification
   read receipts, Nudge).
 
 === Version bumped to 5.0.0 (16/08/2026) — classification: MAJOR ===
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 6 — Foundations: admin/moderation protocol wrappers, adminStore
+
+  Problem: Phase 6 (Administration & Moderation) needed typed socketService
+  wrappers for the remaining ungated event family (GET_ROLES/ASSIGN_ROLE,
+  KICK_USER/BAN_USER/UNBAN_USER/GET_BANNED_USERS, GET_PENDING_EMOJIS/
+  REVIEW_CUSTOM_EMOJI) and a store shaped for the three admin lists (users+
+  roles, pending emoji queue, banned users) — each refetched on tab open
+  rather than kept live, per the PRD's own State/Data note.
+
+  Solution: socketService.ts gained the eight wrappers above, matching the
+  existing thin Promise-wrapped-emit pattern. adminStore.ts holds
+  users/roles/pendingEmojis/bannedUsers plus a loading flag per list.
+  adminService.ts wraps each mutation with reportAckError and the
+  appropriate sound cue (user_banned_from_server/user_unbanned_from_server
+  fire from the ack here, since BAN_USER/UNBAN_USER have no broadcast to
+  other admins to double-fire against; kick's sound deliberately does NOT
+  fire from the ack — see the P6.4 entry below).
+
+  Key Files Modified:
+    src/services/socketService.ts
+    src/stores/adminStore.ts (NEW)
+    src/services/adminService.ts (NEW)
+
+  Verification:
+    npm run typecheck passes.
+
+  Next Step: Build the Roles tab (P6.1), then Emoji approval (P6.2).
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 6 — P6.1: Roles tab with self-demotion guard
+
+  Problem: Admins need to view every server user's role assignments and
+  toggle them, with a guard preventing an admin from removing their own
+  admin-equivalent role via the UI (matching the desktop's specific
+  name-match rule, not a structural server signal — none exists).
+
+  Solution: RolesTab.tsx lists every user (GET_ALL_USERS) with expandable
+  rows (tap to reveal role-toggle badges — chosen over a kebab menu, the
+  PRD's other offered option, since toggling several roles in one sitting
+  fights a DropdownMenu's default close-on-select behavior) sourced from
+  GET_ROLES. Each toggle calls ASSIGN_ROLE add/remove and refetches.
+  Self-demotion guard matches by role name `"Server Admin"` exactly like
+  the desktop's renderer.ts — but identifies "self" via this project's own
+  already-resolved `selfUserId`/nickname-fallback mechanism (established
+  Phase 3), not the desktop's own comparison, which actually compares a raw
+  instanceId against a DB user id and isn't reliably equivalent in general.
+
+  A real Rules-of-Hooks bug was caught and fixed during this item's
+  verification, in SettingsSheet.tsx's tab-visibility gating (see the
+  acceptance-verification entry below for the full story): a
+  `useHasPermission(ADMIN) || useHasPermission(BAN_USER)` expression
+  short-circuited the second hook call once the first became true,
+  changing the hook count between renders and crashing the whole component
+  for any admin whose permissions had just resolved.
+
+  Key Files Modified:
+    src/features/admin/RolesTab.tsx (NEW)
+    src/features/settings/SettingsSheet.tsx
+
+  Verification:
+    npm run typecheck / lint pass.
+
+  Next Step: Build the Emoji approval queue (P6.2).
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 6 — P6.2: Emoji approval queue tab
+
+  Problem: MANAGE_EMOJIS-holders need a review queue for Phase 4's pending
+  custom-emoji submissions, with the submitter's nickname and a preview of
+  the cropped image, and Approve/Reject actions.
+
+  Solution: EmojiApprovalTab.tsx lists GET_PENDING_EMOJIS results with an
+  inline preview image (resolved via the same resolveMediaUrl helper
+  MessageRow/DmMessageRow use for attachments) and submitter nickname.
+  Approve/Reject call REVIEW_CUSTOM_EMOJI and remove the item from the
+  local queue view on success — approval's live CUSTOM_EMOJI_APPROVED
+  broadcast is already consumed by Phase 4's picker with zero new client-
+  side plumbing needed, exactly as the PRD predicted.
+
+  Key Files Modified:
+    src/features/admin/EmojiApprovalTab.tsx (NEW)
+
+  Verification:
+    npm run typecheck / lint pass.
+
+  Next Step: Build the Server settings tab + Banned Users list (P6.3/P6.5).
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 6 — P6.3/P6.5: Server settings tab (Nudge toggle) + Banned Users list
+
+  Problem: The Nudge enabled/disabled toggle requires literal ADMIN per
+  the real server's nudge.handler.ts (confirmed by reading it directly,
+  per the PRD's explicit instruction not to assume parity from summaries
+  alone) — not MANAGE_CHANNELS or any other flag. The Banned Users list
+  (GET_BANNED_USERS/UNBAN_USER) requires only BAN_USER. Both share one
+  Settings tab, so the tab itself needed OR-gating while its two sections
+  gate independently and more strictly.
+
+  Solution: ServerSettingsTab.tsx renders the Nudge checkbox only behind
+  `useHasPermission(PermissionFlags.ADMIN)` (a literal check — hasPermission's
+  own ADMIN-bypass logic collapses to exactly that when the flag under test
+  already IS ADMIN) and the Banned Users list only behind BAN_USER, so a
+  moderator with BAN_USER but not ADMIN sees the list without the toggle.
+  SettingsSheet.tsx's tab list is now filtered per-tab by the relevant
+  permission(s) rather than always showing Roles/Emojis/Server as
+  "coming soon" placeholders (the Phase 1 stopgap this replaces).
+
+  Key Files Modified:
+    src/features/admin/ServerSettingsTab.tsx (NEW)
+    src/features/settings/SettingsSheet.tsx
+    src/services/adminService.ts (updateNudgeEnabled added)
+
+  Verification:
+    npm run typecheck / lint pass.
+
+  Next Step: Build Kick from voice channel (P6.4).
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 6 — P6.4: Kick from voice channel
+
+  Problem: Fills the action slot Phase 3's OccupantActionsPopover was
+  explicitly built to accept without restructuring: an admin-only "Kick
+  from Channel" entry, hidden for the admin's own row (already true by
+  construction — VoicePanel never renders the popover for the local user),
+  with the kicked user seeing a toast + sound and a clean voice teardown,
+  rejoinable immediately (not a ban).
+
+  Solution: OccupantActionsPopover gained a KICK_USER-gated button calling
+  adminService.kickUser. connectionService now handles USER_KICKED (self —
+  reuses the same local-cleanup primitives leaveVoiceChannel() uses, but
+  skips leaveVoiceChannel()'s own redundant USER_LEAVE_CHANNEL emit and its
+  "leaving-channel" sound, which would double up with
+  you_were_kicked_from_channel for what's really one event) and
+  CHANNEL_USER_KICKED (other occupants — plays user_kicked_from_channel).
+  The existing PRESENCE_UPDATE-diff handler that normally plays
+  user_disconnected_from_channel on any departure now checks a short-lived
+  "this departure was a kick" marker (set by CHANNEL_USER_KICKED, cleared
+  after the very next presence diff) so a kick doesn't also trigger the
+  generic leave sound for the same event — matching the server's own
+  "so they can suppress the presence-based leave sound" comment on
+  CHANNEL_USER_KICKED's purpose.
+
+  Key Files Modified:
+    src/features/voice/OccupantActionsPopover.tsx
+    src/features/voice/VoicePanel.tsx
+    src/services/voiceConnectionService.ts
+    src/services/connectionService.ts
+
+  Verification:
+    npm run typecheck / lint pass.
+
+  Next Step: Build Ban/Unban (P6.5's remaining half) and the password-
+  protected connect-flow polish (P6.6).
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 6 — P6.5: Ban/Unban from the Online Users directory
+
+  Problem: Needed a Ban action reachable from Phase 5's Online Users sheet
+  (confirmation dialog, destructive styling, noting the instance-ID-based
+  circumvention vector inherent to the server's identity model — not
+  something this client can close) and a way for the banned user's own
+  client to learn what happened, distinguishable from a generic
+  disconnect/reconnect-loop message.
+
+  Solution: OnlineUsersDialog's rows gained a BAN_USER-gated Ban icon
+  (hidden for the viewer's own row) opening an AlertDialog confirm, calling
+  adminService.banUser. connectionService now handles USER_BANNED (fired
+  to the banned socket right before the server force-disconnects it) by
+  setting a definitive connectionStore error — reusing the existing
+  RequireConnection redirect-to-/connect mechanism for free. Added a
+  `status === "error"` guard to the disconnect handler so the immediately-
+  following forced disconnect doesn't overwrite that message with the
+  generic "reconnecting" flow.
+
+  Key Files Modified:
+    src/features/dm/OnlineUsersDialog.tsx
+    src/services/connectionService.ts
+
+  Verification:
+    npm run typecheck / lint pass.
+
+  Next Step: P6.6 (password-protected connect-flow polish), then full
+  Phase 6 acceptance verification.
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 6 — P6.6: Password-protected connect error distinction
+
+  Problem: Phase 1 shipped the password field; this phase is responsible
+  for a distinguishable, accurate error between "this server needs a
+  password" and "you typed the wrong one." Reading the real server's
+  connection.handler.ts directly (per the PRD's explicit verify-don't-
+  assume instruction) showed it returns exactly one generic ack error —
+  "Invalid server password" — for BOTH cases; there is no server-side
+  distinction to relay.
+
+  Solution: connectionService.ts's new resolveJoinErrorMessage() resolves
+  the distinction client-side using what was actually submitted: that
+  specific ack error paired with an empty password means "This server
+  requires a password.", paired with a non-empty one means "Incorrect
+  password." Any other ack error (e.g. "You are banned from this server")
+  passes through verbatim. Applied at both join sites (initial connect and
+  the post-reconnect re-join handshake).
+
+  Key Files Modified:
+    src/services/connectionService.ts
+
+  Verification:
+    npm run typecheck / lint pass.
+
+  Next Step: Full Phase 6 acceptance criteria verification, then
+  /bump-version.
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 6 acceptance criteria verification
+
+  Problem: Same rationale as every prior phase's acceptance pass — needed
+  one live, multi-client check against the phase's actual stated
+  Acceptance Criteria, not just typecheck/lint/unit-test green.
+
+  Solution: Extended the scratchpad mock server (never committed) with a
+  real per-user role-assignment model (previously a nickname-literal
+  binary admin/non-admin shortcut) so GET_ALL_USERS/GET_ROLES/ASSIGN_ROLE/
+  KICK_USER/BAN_USER/UNBAN_USER/GET_BANNED_USERS/GET_PENDING_EMOJIS/
+  REVIEW_CUSTOM_EMOJI/UPDATE_SERVER_SETTINGS could each be gated by their
+  real required PermissionFlags bit, matching the real server's handlers
+  exactly (GET_ALL_USERS: MANAGE_ROLES; KICK_USER: KICK_USER; BAN_USER/
+  UNBAN_USER/GET_BANNED_USERS: BAN_USER; GET_PENDING_EMOJIS/
+  REVIEW_CUSTOM_EMOJI: MANAGE_EMOJIS; UPDATE_SERVER_SETTINGS: literal
+  ADMIN) — plus a password-protection env var and a ban-blocks-join check,
+  both previously absent from the mock. Ran a 25-check Playwright pass
+  across three simultaneous accounts (an admin, a plain member, and a
+  purpose-built partial-permission "Moderator" role) covering every P6.1-
+  P6.6 acceptance criterion.
+
+  Two real application bugs were caught and fixed during this pass:
+    1. A Rules-of-Hooks violation in SettingsSheet.tsx:
+       `useHasPermission(ADMIN) || useHasPermission(BAN_USER)` — the `||`
+       short-circuits, skipping the second hook call once the first
+       resolves true, which changes the hook count between renders and
+       crashes the whole component the moment an admin's permissions
+       finish resolving post-connect. Fixed by calling both hooks
+       unconditionally into separate variables before OR-ing the results.
+    2. AppHeader had no persistent way to reach DMs on desktop — Phase 5's
+       BottomTabBar is `lg:hidden`, and nothing else linked to `/app/dms`,
+       so a desktop user had literally no entry point into the DM feature
+       at all. Added a persistent Mail icon (with its own unread dot) to
+       AppHeader, visible at every breakpoint.
+    (Both already folded into their respective P5/P6 entries above; noted
+    here since this pass is what surfaced them.)
+
+  A genuine, pre-existing architectural gap was also surfaced, not fixed
+  (fixing it would require server changes, out of scope): a role lacking
+  MANAGE_ROLES can never resolve its own permission flags beyond the
+  default, because GET_ALL_USERS — the only self-identification bootstrap
+  this project has ever had (established Phase 3) — itself requires
+  MANAGE_ROLES. A "Moderator" role holding only BAN_USER+KICK_USER would
+  see none of their own admin-gated UI reflected client-side, even though
+  the server would accept the underlying BAN_USER/KICK_USER calls if
+  attempted. Checked the desktop reference client and found the identical
+  limitation, just papered over cruder (`isAdminUser = usersRes.success`,
+  a binary flag with no per-permission granularity at all) — so this
+  isn't a regression this phase introduced, and this web client's
+  per-flag bitwise gating is already strictly more correct than the
+  desktop's within the same protocol constraint. The verification's
+  "Moderator" test role was given MANAGE_ROLES specifically to isolate and
+  test the thing Phase 6 actually cares about (literal-ADMIN precision for
+  Nudge) separately from this unrelated, pre-existing gap.
+
+  Several test-script bugs were caught and fixed along the way, mostly
+  variations on one theme worth recording since they cost real debugging
+  time: an unscoped `locator("li", { hasText: "Bob" })` matched far more
+  than the intended row, because (a) ChannelTreePanel nests each voice
+  channel's occupants inline under its own row, so text bubbles up through
+  several ancestor `<li>`s at once, and (b) a background dialog's rows
+  remain in the DOM (and thus matchable) even while a foreground dialog is
+  open on top of it. Fixed throughout by either querying a unique
+  aria-label directly (no `<li>` wrapper needed) or explicitly scoping to
+  the relevant `role="dialog"` container. Also: two dialogs share the
+  literal aria-label "Close settings" (the full-screen backdrop button and
+  the header's X) — `.first()` happened to resolve to the backdrop, whose
+  own bounding-box center sits behind the centered panel and can't
+  actually be clicked; fixed by scoping through the dialog's own accessible
+  name. And: banning a user only closes the nested confirm AlertDialog, not
+  the parent Online Users dialog, which then blocks every subsequent click
+  on the admin's page — the app's behavior here is reasonable (lets an
+  admin ban several users in one sitting without reopening the sheet), so
+  the test was changed to explicitly dismiss it instead.
+
+  Final clean run: 25/25 checks passed, zero real console/page errors
+  (a handful of expected 404s from the test's own deliberately-fake emoji
+  image URLs, not an app issue).
+
+  Remaining gaps against the phase's stated Acceptance Criteria, honestly
+  flagged:
+    - The MANAGE_ROLES self-resolution gap described above is a genuine,
+      pre-existing limitation surfaced (not created) by this phase — a
+      partial-permission role without MANAGE_ROLES will under-display its
+      own admin-gated UI client-side, even though the server would honor
+      the underlying action. Not fixable client-side without a new
+      server-side "who am I" event, which is out of scope (client-only
+      project).
+    - No dedicated unit tests were added this phase, consistent with
+      Phases 4/5's same call — the new admin/moderation logic was judged
+      lower-risk to verify via the live multi-client Playwright pass above.
+    - Standing sandbox limitation carried over from every prior phase:
+      webkit Playwright project still crashes on page.goto in this
+      proot/ARM64 sandbox, unrelated to any Phase 6 code.
+
+  Key Files Modified:
+    (none beyond the P6.x entries above; this entry covers verification
+    tooling only, none of it committed)
+
+  Verification:
+    npm run typecheck / lint / test / build all pass (33/33 unit tests,
+    unchanged count — no new unit tests this phase, see gap above).
+    Live multi-client Playwright pass: 25/25 checks, zero real
+    console/page errors, detailed above.
+
+  Next Step: Phase 6 complete — run /bump-version (MAJOR, per the PRD:
+  this phase ships new capabilities throughout — roles UI, emoji approval,
+  kick/ban, server settings).
+
+=== Version bumped to 6.0.0 (16/08/2026) — classification: MAJOR ===

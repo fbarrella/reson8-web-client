@@ -3,19 +3,18 @@ import { X } from "lucide-react";
 
 import { useUiStore } from "@/stores/uiStore";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { useHasPermission } from "@/stores/permissionsStore";
+import { PermissionFlags } from "@/types/reson8-protocol";
 import { cn } from "@/lib/utils";
 import { AboutTab } from "@/features/settings/AboutTab";
 import { ApplicationTab } from "@/features/settings/ApplicationTab";
 import { VoiceShortcutsTab } from "@/features/settings/VoiceShortcutsTab";
 import { AudioTab } from "@/features/settings/AudioTab";
+import { RolesTab } from "@/features/admin/RolesTab";
+import { EmojiApprovalTab } from "@/features/admin/EmojiApprovalTab";
+import { ServerSettingsTab } from "@/features/admin/ServerSettingsTab";
 
-/**
- * Roles/Emojis/Server tabs are gated on cached connect-time permission flags
- * (Phase 1 PRD P1.10) — Phase 1 has no permission cache yet, so they render
- * for everyone as "coming soon" rather than being hidden, avoiding a false
- * "this feature doesn't exist" impression before Phase 3/6 land it.
- */
-const TABS = [
+const ALL_TABS = [
   { id: "roles", label: "Roles" },
   { id: "emojis", label: "Emojis" },
   { id: "server", label: "Server" },
@@ -25,7 +24,7 @@ const TABS = [
   { id: "about", label: "About" },
 ] as const;
 
-type TabId = (typeof TABS)[number]["id"];
+type TabId = (typeof ALL_TABS)[number]["id"];
 
 export function SettingsSheet() {
   const open = useUiStore((s) => s.settingsOpen);
@@ -33,6 +32,27 @@ export function SettingsSheet() {
   const status = useConnectionStore((s) => s.status);
   const [activeTab, setActiveTab] = useState<TabId>("about");
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // Roles/Emojis/Server tabs never render for a non-admin account — not
+  // just hidden content behind a visible tab (Phase 6 PRD acceptance
+  // criteria: "a non-admin account never sees the Roles/Emojis/Server
+  // settings tabs"). ADMIN bypasses every other check per hasPermission's
+  // own contract, so a full admin sees all three regardless of which
+  // specific flag each one checks.
+  const canManageRoles = useHasPermission(PermissionFlags.MANAGE_ROLES);
+  const canManageEmojis = useHasPermission(PermissionFlags.MANAGE_EMOJIS);
+  // Both hooks must run unconditionally every render — `||` would
+  // short-circuit and skip the second call once the first is true,
+  // changing the hook count between renders (Rules of Hooks violation).
+  const isAdmin = useHasPermission(PermissionFlags.ADMIN);
+  const canBan = useHasPermission(PermissionFlags.BAN_USER);
+  const canSeeServerTab = isAdmin || canBan;
+  const TABS = ALL_TABS.filter((tab) => {
+    if (tab.id === "roles") return canManageRoles;
+    if (tab.id === "emojis") return canManageEmojis;
+    if (tab.id === "server") return canSeeServerTab;
+    return true;
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -103,22 +123,20 @@ export function SettingsSheet() {
           <div role="tabpanel" className="min-h-0 flex-1 overflow-y-auto p-4">
             {activeTab === "about" && <AboutTab />}
             {activeTab === "application" && <ApplicationTab />}
-            {activeTab === "roles" && <ComingSoon />}
-            {activeTab === "emojis" && <ComingSoon />}
-            {activeTab === "server" && <ComingSoon disabled={status !== "connected"} />}
+            {activeTab === "roles" && canManageRoles && <RolesTab />}
+            {activeTab === "emojis" && canManageEmojis && <EmojiApprovalTab />}
+            {activeTab === "server" &&
+              canSeeServerTab &&
+              (status === "connected" ? (
+                <ServerSettingsTab />
+              ) : (
+                <p className="text-sm text-muted-foreground">Connect to a server to manage this.</p>
+              ))}
             {activeTab === "voice" && <VoiceShortcutsTab />}
             {activeTab === "audio" && <AudioTab />}
           </div>
         </div>
       </div>
     </div>
-  );
-}
-
-function ComingSoon({ disabled }: { disabled?: boolean } = {}) {
-  return (
-    <p className="text-sm text-muted-foreground">
-      {disabled ? "Connect to a server to manage this." : "Coming in a later phase."}
-    </p>
   );
 }
