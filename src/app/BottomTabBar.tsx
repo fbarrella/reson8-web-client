@@ -2,6 +2,7 @@ import { NavLink } from "react-router-dom";
 import { Hash, MessageSquare, Mail, Mic } from "lucide-react";
 
 import { useChatStore } from "@/stores/chatStore";
+import { useDmStore } from "@/stores/dmStore";
 import { cn } from "@/lib/utils";
 
 const TABS = [
@@ -18,6 +19,7 @@ const TABS = [
  */
 export function BottomTabBar() {
   const hasUnread = useChatStore((s) => s.unreadChannelIds.size > 0);
+  const hasUnreadDms = useDmStore((s) => [...s.partners.values()].some((p) => p.unreadCount > 0));
 
   return (
     <nav
@@ -39,6 +41,12 @@ export function BottomTabBar() {
           <span className="relative">
             <Icon className="size-5" />
             {to === "/app/chat" && hasUnread && (
+              <span
+                aria-label="Unread"
+                className="absolute -top-0.5 -right-1 size-2 rounded-full bg-primary ring-2 ring-card"
+              />
+            )}
+            {to === "/app/dms" && hasUnreadDms && (
               <span
                 aria-label="Unread"
                 className="absolute -top-0.5 -right-1 size-2 rounded-full bg-primary ring-2 ring-card"

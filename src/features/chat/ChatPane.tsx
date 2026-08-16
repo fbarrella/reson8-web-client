@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 
 import { useChatStore } from "@/stores/chatStore";
-import { markChannelRead } from "@/services/chatService";
+import { markChannelRead, sendMessage } from "@/services/chatService";
 import { PinnedBar } from "@/features/chat/PinnedBar";
 import { MessageList } from "@/features/chat/MessageList";
 import { Composer } from "@/features/chat/Composer";
@@ -26,7 +26,7 @@ export function ChatPane({ channelId }: { channelId: string }) {
     <div className="flex h-full min-h-0 flex-col">
       <PinnedBar channelId={channelId} />
       <MessageList channelId={channelId} />
-      <Composer channelId={channelId} />
+      <Composer onSend={(content, url, publicId) => sendMessage(channelId, content, url, publicId)} />
     </div>
   );
 }

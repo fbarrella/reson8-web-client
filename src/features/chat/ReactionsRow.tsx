@@ -1,16 +1,17 @@
 import { Plus } from "lucide-react";
 
 import { useConnectionStore } from "@/stores/connectionStore";
-import { toggleReaction } from "@/services/chatService";
 import { EmojiPicker } from "@/features/emoji/EmojiPicker";
 import { cn } from "@/lib/utils";
 
+/** Channel-vs-DM agnostic — the caller decides which service (and isDm
+ *  flag) TOGGLE_REACTION goes out with (Phase 5 PRD P5.3 reuse). */
 export function ReactionsRow({
-  messageId,
   reactions,
+  onToggle,
 }: {
-  messageId: string;
   reactions?: Array<{ emoji: string; count: number; userIds: string[] }>;
+  onToggle: (token: string) => void;
 }) {
   const selfUserId = useConnectionStore((s) => s.selfUserId);
 
@@ -22,7 +23,7 @@ export function ReactionsRow({
           <button
             key={r.emoji}
             type="button"
-            onClick={() => void toggleReaction(messageId, r.emoji)}
+            onClick={() => onToggle(r.emoji)}
             className={cn(
               "flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs",
               active ? "border-primary bg-primary/10 text-primary" : "border-border hover:bg-accent",
@@ -35,7 +36,7 @@ export function ReactionsRow({
       })}
       <EmojiPicker
         align="start"
-        onPick={(token) => void toggleReaction(messageId, token)}
+        onPick={onToggle}
         trigger={
           <button
             type="button"

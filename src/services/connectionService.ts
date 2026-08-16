@@ -4,12 +4,18 @@ import { useChannelTreeStore } from "@/stores/channelTreeStore";
 import { usePermissionsStore } from "@/stores/permissionsStore";
 import { useChatStore } from "@/stores/chatStore";
 import { useCustomEmojiStore } from "@/stores/customEmojiStore";
+import { useDmStore } from "@/stores/dmStore";
+import { useServerSettingsStore } from "@/stores/serverSettingsStore";
 import { toast } from "@/stores/toastStore";
 import { soundAlert } from "@/lib/soundAlert";
 import { isPermissionDeniedMessage } from "@/lib/ackError";
+import { vibrate, setAppBadge, clearAppBadge } from "@/lib/deviceAlerts";
 import * as voiceConnectionService from "@/services/voiceConnectionService";
 import { refreshPermissions } from "@/services/permissionsService";
+import { refreshReadReceipts } from "@/services/dmService";
 import type { ServerToClientEvents, IChannelTreeNode } from "@/types/reson8-protocol";
+
+const MOBILE_BREAKPOINT_QUERY = "(max-width: 1023.98px)"; // matches the lg: breakpoint used throughout the shell
 
 const PING_INTERVAL_MS = 3000;
 
@@ -27,6 +33,43 @@ function collectUnreadChannelIds(nodes: IChannelTreeNode[], out: string[]): void
   for (const node of nodes) {
     if (node.hasUnread) out.push(node.id);
     if (node.children.length > 0) collectUnreadChannelIds(node.children, out);
+  }
+}
+
+function currentUnreadDmTotal(): number {
+  let total = 0;
+  for (const partner of useDmStore.getState().partners.values()) total += partner.unreadCount;
+  return total;
+}
+
+/**
+ * GET_UNREAD_DM_PARTNERS hydration (Phase 5 PRD P5.2): populates the DMs
+ * tab list + badge on every platform, and additionally auto-navigates on
+ * mobile when there's exactly one unread partner (desktop instead just
+ * opens the tab, matching each platform's own navigation idiom — see the
+ * PRD's explicit call-out against auto-pushing multiple nav-stack entries).
+ */
+async function hydrateUnreadDmPartners(): Promise<void> {
+  const res = await socketService.getUnreadDmPartners();
+  if (!res.success || !res.partners) return;
+  for (const partner of res.partners) {
+    useDmStore.getState().upsertPartner({
+      userId: partner.partnerId,
+      nickname: partner.partnerNickname,
+      isOnline: useDmStore.getState().partners.get(partner.partnerId)?.isOnline ?? false,
+      unreadCount: partner.unreadCount,
+    });
+    useDmStore.getState().openPartner(partner.partnerId);
+  }
+  if (res.partners.length === 1 && window.matchMedia(MOBILE_BREAKPOINT_QUERY).matches) {
+    useDmStore.getState().setPendingAutoOpen(res.partners[0]!.partnerId);
+  }
+}
+
+async function fetchServerSettings(): Promise<void> {
+  const res = await socketService.getServerSettings();
+  if (res.success && typeof res.nudgeEnabled === "boolean") {
+    useServerSettingsStore.getState().setNudgeEnabled(res.nudgeEnabled);
   }
 }
 
@@ -86,14 +129,70 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
     useChatStore.getState().removeMessage(payload.channelId, payload.messageId);
   };
   const handleReactionUpdated: ServerToClientEvents["REACTION_UPDATED"] = (payload) => {
-    if (payload.isDm) return; // DMs are Phase 5's responsibility
-    useChatStore.getState().setReactions(payload.messageId, payload.reactions);
+    if (payload.isDm) {
+      useDmStore.getState().setReactions(payload.messageId, payload.reactions);
+    } else {
+      useChatStore.getState().setReactions(payload.messageId, payload.reactions);
+    }
   };
   const handleChannelPinUpdated: ServerToClientEvents["CHANNEL_PIN_UPDATED"] = (payload) => {
     useChatStore.getState().setPinned(payload.channelId, payload.pinnedMessage);
   };
   const handleCustomEmojiApproved: ServerToClientEvents["CUSTOM_EMOJI_APPROVED"] = (payload) => {
     useCustomEmojiStore.getState().upsert(payload.emoji);
+  };
+  const handleDirectMessageReceived: ServerToClientEvents["DIRECT_MESSAGE_RECEIVED"] = (message) => {
+    const { nickname, selfUserId, setSelfUserId } = useConnectionStore.getState();
+    const isOwnMessage = message.senderNickname === nickname;
+    if (isOwnMessage && !selfUserId) setSelfUserId(message.senderId);
+    const partnerId = isOwnMessage ? message.receiverId : message.senderId;
+    const partnerNickname = isOwnMessage
+      ? (useDmStore.getState().partners.get(partnerId)?.nickname ?? partnerId)
+      : message.senderNickname;
+
+    useDmStore.getState().addMessage(partnerId, message);
+    useDmStore.getState().upsertPartner({
+      userId: partnerId,
+      nickname: partnerNickname,
+      isOnline: true,
+      unreadCount: useDmStore.getState().partners.get(partnerId)?.unreadCount ?? 0,
+    });
+
+    const { activePartnerId } = useDmStore.getState();
+    if (isOwnMessage) return;
+    if (partnerId !== activePartnerId) {
+      useDmStore.getState().markPartnerUnread(partnerId, partnerNickname);
+      soundAlert.play("hey_wake_up");
+      if (document.visibilityState !== "visible") setAppBadge(currentUnreadDmTotal());
+    } else {
+      // The partner is clearly active right now — a good opportunistic
+      // moment to pick up any read-receipt change on our own sent messages
+      // (no live push exists for that — see dmService.refreshReadReceipts).
+      void refreshReadReceipts(partnerId);
+    }
+  };
+  const handleDirectMessageDeleted: ServerToClientEvents["DIRECT_MESSAGE_DELETED"] = (payload) => {
+    useDmStore.getState().removeMessageById(payload.dmId);
+  };
+  const handleNudgeReceived: ServerToClientEvents["NUDGE_RECEIVED"] = (payload) => {
+    toast({ title: "Nudge!", description: `${payload.fromNickname} nudged you.` });
+    soundAlert.play("nudge", "nudge");
+    vibrate([200, 100, 200]);
+    if (document.visibilityState !== "visible") setAppBadge(Math.max(currentUnreadDmTotal(), 1));
+  };
+  const handleServerSettingsUpdated: ServerToClientEvents["SERVER_SETTINGS_UPDATED"] = (payload) => {
+    useServerSettingsStore.getState().setNudgeEnabled(payload.nudgeEnabled);
+  };
+  const handleUserJoined: ServerToClientEvents["USER_JOINED"] = (payload) => {
+    useDmStore.getState().upsertPartner({
+      userId: payload.userId,
+      nickname: payload.nickname,
+      isOnline: true,
+      unreadCount: useDmStore.getState().partners.get(payload.userId)?.unreadCount ?? 0,
+    });
+  };
+  const handleUserLeft: ServerToClientEvents["USER_LEFT"] = (payload) => {
+    useDmStore.getState().setOnline(payload.userId, false);
   };
   const handleError: ServerToClientEvents["ERROR"] = (payload) => {
     toast({ title: "Server error", description: payload.message, variant: "destructive" });
@@ -131,6 +230,8 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
         void socketService.getApprovedEmojis().then((res) => {
           if (res.success && res.emojis) useCustomEmojiStore.getState().setApprovedList(res.emojis);
         });
+        void fetchServerSettings();
+        void hydrateUnreadDmPartners();
       });
   };
   const handleReconnectFailed = () => {
@@ -139,6 +240,7 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
   const handleVisibilityChange = () => {
     if (document.visibilityState === "visible") {
       voiceConnectionService.rejoinVoiceIfConnectionLost();
+      clearAppBadge();
     }
   };
 
@@ -152,6 +254,12 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
   socket.on("REACTION_UPDATED", handleReactionUpdated);
   socket.on("CHANNEL_PIN_UPDATED", handleChannelPinUpdated);
   socket.on("CUSTOM_EMOJI_APPROVED", handleCustomEmojiApproved);
+  socket.on("DIRECT_MESSAGE_RECEIVED", handleDirectMessageReceived);
+  socket.on("DIRECT_MESSAGE_DELETED", handleDirectMessageDeleted);
+  socket.on("NUDGE_RECEIVED", handleNudgeReceived);
+  socket.on("SERVER_SETTINGS_UPDATED", handleServerSettingsUpdated);
+  socket.on("USER_JOINED", handleUserJoined);
+  socket.on("USER_LEFT", handleUserLeft);
   socket.on("ERROR", handleError);
   socket.on("disconnect", handleDisconnect);
   socket.io.on("reconnect", handleReconnect);
@@ -175,6 +283,12 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
     socket.off("REACTION_UPDATED", handleReactionUpdated);
     socket.off("CHANNEL_PIN_UPDATED", handleChannelPinUpdated);
     socket.off("CUSTOM_EMOJI_APPROVED", handleCustomEmojiApproved);
+    socket.off("DIRECT_MESSAGE_RECEIVED", handleDirectMessageReceived);
+    socket.off("DIRECT_MESSAGE_DELETED", handleDirectMessageDeleted);
+    socket.off("NUDGE_RECEIVED", handleNudgeReceived);
+    socket.off("SERVER_SETTINGS_UPDATED", handleServerSettingsUpdated);
+    socket.off("USER_JOINED", handleUserJoined);
+    socket.off("USER_LEFT", handleUserLeft);
     socket.off("ERROR", handleError);
     socket.off("disconnect", handleDisconnect);
     socket.io.off("reconnect", handleReconnect);
@@ -240,6 +354,8 @@ export function connectToServer(params: ConnectParams): Promise<ConnectResult> {
           void socketService.getApprovedEmojis().then((res) => {
             if (res.success && res.emojis) useCustomEmojiStore.getState().setApprovedList(res.emojis);
           });
+          void fetchServerSettings();
+          void hydrateUnreadDmPartners();
           resolve({ success: true });
         });
     };
@@ -261,4 +377,7 @@ export function leaveServer(): void {
   usePermissionsStore.getState().reset();
   useChatStore.getState().reset();
   useCustomEmojiStore.getState().reset();
+  useDmStore.getState().reset();
+  useServerSettingsStore.getState().reset();
+  clearAppBadge();
 }

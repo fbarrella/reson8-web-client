@@ -1,4 +1,5 @@
-import { Outlet } from "react-router-dom";
+import { useEffect } from "react";
+import { Outlet, useNavigate } from "react-router-dom";
 import { X } from "lucide-react";
 
 import { AppHeader } from "@/app/AppHeader";
@@ -7,6 +8,7 @@ import { ChannelTreePanel } from "@/features/channels/ChannelTreePanel";
 import { VoiceMiniBar } from "@/features/voice/VoiceMiniBar";
 import { VoicePanel } from "@/features/voice/VoicePanel";
 import { useUiStore } from "@/stores/uiStore";
+import { useDmStore } from "@/stores/dmStore";
 import { cn } from "@/lib/utils";
 
 /**
@@ -23,6 +25,17 @@ export function AppShell() {
   const setChannelDrawerOpen = useUiStore((s) => s.setChannelDrawerOpen);
   const voicePanelOpen = useUiStore((s) => s.voicePanelOpen);
   const setVoicePanelOpen = useUiStore((s) => s.setVoicePanelOpen);
+  const pendingAutoOpenPartnerId = useDmStore((s) => s.pendingAutoOpenPartnerId);
+  const navigate = useNavigate();
+
+  // One-shot mobile auto-open of the sole unread DM conversation right
+  // after connect (Phase 5 PRD P5.2) — desktop instead just opens the tab,
+  // handled directly by connectionService's hydration without navigating.
+  useEffect(() => {
+    if (!pendingAutoOpenPartnerId) return;
+    navigate(`/app/dms/${pendingAutoOpenPartnerId}`);
+    useDmStore.getState().setPendingAutoOpen(null);
+  }, [pendingAutoOpenPartnerId, navigate]);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden lg:flex-row">
