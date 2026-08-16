@@ -49,15 +49,23 @@ export interface VoiceSignaling {
 const ICE_DISCONNECTED_GRACE_MS = 4000;
 const CONSUME_MAX_ATTEMPTS = 3;
 const CONSUME_RETRY_DELAY_MS = 1000;
+const NOISE_GATE_POLL_MS = 50;
+const NOISE_GATE_FLOOR_DB = -100;
+
+export interface UserAudioOverride {
+  volumePercent: number;
+  locallyMuted: boolean;
+}
+
+const DEFAULT_OVERRIDE: UserAudioOverride = { volumePercent: 100, locallyMuted: false };
 
 /**
  * Client-side mediasoup voice engine — Device/transport/producer/consumer
  * lifecycle, ported from the desktop client's `voice.service.ts` (Phase 2
- * PRD P2.1). Scope is deliberately limited to what Phase 2 needs: the noise
- * gate, per-user volume/local mute, and global voice volume machinery the
- * desktop file also contains belong to Phase 3 and are intentionally not
- * ported here yet (per-user playback stays plain `<audio>` elements this
- * phase, not routed through AudioContext/GainNode — P2.5).
+ * PRD P2.1). Phase 3 (P3.1/P3.2/P3.3) adds the noise gate and a shared
+ * AudioContext-based `MediaElementAudioSourceNode -> GainNode -> destination`
+ * chain per consumer, replacing the plain-`<audio>`-only playback path Phase
+ * 2 intentionally left in place.
  */
 export class VoiceService {
   private device: MsTypes.Device | null = null;
@@ -74,9 +82,36 @@ export class VoiceService {
   private _isDeafened = false;
   /** True only when deafening had to pause the producer itself — see toggleDeafen(). */
   private _deafenAutoMuted = false;
+  /** True when the producer is paused because of an explicit Mute action (or PTT
+   *  lock) — the noise gate must never fight this (Phase 3 PRD P3.1). */
+  private _isManuallyMuted = false;
 
   /** Producers that arrived before the recv transport was ready. */
   private pendingProducers: { producerId: string; userId: string }[] = [];
+
+  // ── Phase 3: shared AudioContext for per-user gain + noise-gate analysis ──
+  private audioContext: AudioContext | null = null;
+  private gainNodes = new Map<string, GainNode>();
+  private mediaSources = new Map<string, MediaElementAudioSourceNode>();
+  private consumerUserIds = new Map<string, string>();
+  private userOverrides = new Map<string, UserAudioOverride>();
+  private globalVoiceVolumePercent = 100;
+  /** Supplies a persisted (localStorage-backed) override for a user the first
+   *  time their producer is consumed this session — keeps VoiceService free of
+   *  any store/localStorage import (Phase 2 PRD P2.1's testability goal). */
+  private getInitialOverride: ((userId: string) => UserAudioOverride) | null = null;
+
+  // ── Phase 3 P3.1: noise gate ─────────────────────────────────────────────
+  private noiseGateEnabled = false;
+  private noiseGateThresholdDb = -50;
+  private noiseGateAnalyser: AnalyserNode | null = null;
+  private noiseGateSource: MediaStreamAudioSourceNode | null = null;
+  private noiseGateClonedTrack: MediaStreamTrack | null = null;
+  private noiseGateInterval: ReturnType<typeof setInterval> | null = null;
+  private originalTrack: MediaStreamTrack | null = null;
+  /** Fired ~20x/sec with the current mic level in dB while producing — drives
+   *  the live meter in both the active-session and Settings-preview contexts. */
+  onMicLevel: ((db: number) => void) | null = null;
 
   /**
    * Fired at most once per join when a transport's WebRTC connection is
@@ -98,6 +133,107 @@ export class VoiceService {
 
   setAudioInputDeviceId(deviceId: string | null): void {
     this.audioInputDeviceId = deviceId;
+  }
+
+  setOverrideProvider(fn: (userId: string) => UserAudioOverride): void {
+    this.getInitialOverride = fn;
+  }
+
+  // ── Phase 3 P3.3: global voice volume ───────────────────────────────────
+
+  setGlobalVoiceVolume(percent: number): void {
+    this.globalVoiceVolumePercent = percent;
+    for (const consumerId of this.gainNodes.keys()) this.applyGain(consumerId);
+  }
+
+  // ── Phase 3 P3.2: per-user local volume / mute ──────────────────────────
+
+  setUserVolume(userId: string, volumePercent: number): void {
+    const current = this.userOverrides.get(userId) ?? DEFAULT_OVERRIDE;
+    this.userOverrides.set(userId, { ...current, volumePercent });
+    this.applyGainForUser(userId);
+  }
+
+  setUserLocalMute(userId: string, locallyMuted: boolean): void {
+    const current = this.userOverrides.get(userId) ?? DEFAULT_OVERRIDE;
+    this.userOverrides.set(userId, { ...current, locallyMuted });
+    this.applyGainForUser(userId);
+  }
+
+  private applyGainForUser(userId: string): void {
+    for (const [consumerId, uid] of this.consumerUserIds) {
+      if (uid === userId) this.applyGain(consumerId);
+    }
+  }
+
+  private applyGain(consumerId: string): void {
+    const gainNode = this.gainNodes.get(consumerId);
+    if (!gainNode) return;
+    const userId = this.consumerUserIds.get(consumerId);
+    const override = (userId ? this.userOverrides.get(userId) : undefined) ?? DEFAULT_OVERRIDE;
+    gainNode.gain.value = override.locallyMuted
+      ? 0
+      : (override.volumePercent / 100) * (this.globalVoiceVolumePercent / 100);
+  }
+
+  // ── Phase 3 P3.1: noise gate ─────────────────────────────────────────────
+
+  setNoiseGateEnabled(enabled: boolean): void {
+    this.noiseGateEnabled = enabled;
+    // Gate off -> track must stay fully open (baseline, no gating applied).
+    if (!enabled && this.originalTrack && !this._isManuallyMuted) {
+      this.originalTrack.enabled = true;
+    }
+  }
+
+  setNoiseGateThresholdDb(db: number): void {
+    this.noiseGateThresholdDb = db;
+  }
+
+  /**
+   * Clones the raw mic track into its own AnalyserNode chain so that gating
+   * the original track (`track.enabled = false`) never blinds the analysis
+   * — a disabled track reads back as silence, which would leave the gate
+   * permanently closed once it fired (Phase 3 PRD P3.1).
+   */
+  private setupNoiseGateAnalysis(track: MediaStreamTrack): void {
+    if (!this.audioContext) this.audioContext = new AudioContext();
+    this.noiseGateClonedTrack = track.clone();
+    this.noiseGateSource = this.audioContext.createMediaStreamSource(
+      new MediaStream([this.noiseGateClonedTrack]),
+    );
+    this.noiseGateAnalyser = this.audioContext.createAnalyser();
+    this.noiseGateAnalyser.fftSize = 2048;
+    this.noiseGateSource.connect(this.noiseGateAnalyser);
+    this.startNoiseGateLoop();
+  }
+
+  private startNoiseGateLoop(): void {
+    if (this.noiseGateInterval !== null || !this.noiseGateAnalyser) return;
+    const analyser = this.noiseGateAnalyser;
+    const data = new Uint8Array(analyser.fftSize);
+
+    this.noiseGateInterval = setInterval(() => {
+      analyser.getByteTimeDomainData(data);
+      let sumSquares = 0;
+      for (const sample of data) {
+        const normalized = (sample - 128) / 128;
+        sumSquares += normalized * normalized;
+      }
+      const rms = Math.sqrt(sumSquares / data.length);
+      const db = rms > 0 ? 20 * Math.log10(rms) : NOISE_GATE_FLOOR_DB;
+      this.onMicLevel?.(Number.isFinite(db) ? Math.max(db, NOISE_GATE_FLOOR_DB) : NOISE_GATE_FLOOR_DB);
+
+      if (!this.noiseGateEnabled || this._isManuallyMuted || this._isDeafened || !this.originalTrack) return;
+      this.originalTrack.enabled = db > this.noiseGateThresholdDb;
+    }, NOISE_GATE_POLL_MS);
+  }
+
+  private stopNoiseGateLoop(): void {
+    if (this.noiseGateInterval !== null) {
+      clearInterval(this.noiseGateInterval);
+      this.noiseGateInterval = null;
+    }
   }
 
   // ── Join ─────────────────────────────────────────────────────────────
@@ -266,6 +402,9 @@ export class VoiceService {
     const track = this.localStream.getAudioTracks()[0];
     if (!track) throw new Error("No audio track available from getUserMedia");
 
+    this.originalTrack = track;
+    this.setupNoiseGateAnalysis(track);
+
     this.producer = await this.sendTransport.produce({ track });
   }
 
@@ -289,7 +428,7 @@ export class VoiceService {
     }
   }
 
-  async consumeProducer(producerId: string, _userId: string): Promise<void> {
+  async consumeProducer(producerId: string, userId: string): Promise<void> {
     if (!this.recvTransport) throw new Error("Recv transport not ready");
     if (!this.device) throw new Error("Device not loaded");
 
@@ -319,6 +458,22 @@ export class VoiceService {
       // gesture — not independently user-actionable beyond retrying join.
     });
     this.audioElements.set(consumer.id, audio);
+    this.consumerUserIds.set(consumer.id, userId);
+
+    // Route through a per-consumer GainNode (Phase 3 PRD P3.2/P3.3) — the
+    // element's own volume/muted still apply pre-graph (used for deafen
+    // above), the GainNode carries per-user volume/local-mute * global volume.
+    if (!this.audioContext) this.audioContext = new AudioContext();
+    const source = this.audioContext.createMediaElementSource(audio);
+    const gainNode = this.audioContext.createGain();
+    source.connect(gainNode).connect(this.audioContext.destination);
+    this.mediaSources.set(consumer.id, source);
+    this.gainNodes.set(consumer.id, gainNode);
+
+    if (!this.userOverrides.has(userId)) {
+      this.userOverrides.set(userId, this.getInitialOverride?.(userId) ?? DEFAULT_OVERRIDE);
+    }
+    this.applyGain(consumer.id);
 
     await this.signaling.resumeConsumer(consumer.id);
   }
@@ -336,6 +491,9 @@ export class VoiceService {
         audio.remove();
         this.audioElements.delete(consumerId);
       }
+      this.gainNodes.delete(consumerId);
+      this.mediaSources.delete(consumerId);
+      this.consumerUserIds.delete(consumerId);
       break;
     }
   }
@@ -350,6 +508,10 @@ export class VoiceService {
     } else {
       this.producer.pause();
     }
+    this._isManuallyMuted = this.producer.paused;
+    // Re-open immediately on unmute rather than waiting for the next gate
+    // tick; the gate will re-close it within one tick if below threshold.
+    if (!this._isManuallyMuted && this.originalTrack) this.originalTrack.enabled = true;
     return this.producer.paused;
   }
 
@@ -358,6 +520,7 @@ export class VoiceService {
     if (!this.producer || this._isDeafened) return;
     if (muted && !this.producer.paused) this.producer.pause();
     else if (!muted && this.producer.paused) this.producer.resume();
+    this._isManuallyMuted = muted;
   }
 
   /**
@@ -396,6 +559,16 @@ export class VoiceService {
     }
     this.connectionLossReported = false;
 
+    this.stopNoiseGateLoop();
+    if (this.noiseGateClonedTrack) {
+      this.noiseGateClonedTrack.stop();
+      this.noiseGateClonedTrack = null;
+    }
+    this.noiseGateSource = null;
+    this.noiseGateAnalyser = null;
+    this.originalTrack = null;
+    this._isManuallyMuted = false;
+
     if (this.localStream) {
       for (const track of this.localStream.getTracks()) track.stop();
       this.localStream = null;
@@ -412,6 +585,14 @@ export class VoiceService {
       audio.remove();
     }
     this.audioElements.clear();
+    this.gainNodes.clear();
+    this.mediaSources.clear();
+    this.consumerUserIds.clear();
+
+    if (this.audioContext) {
+      void this.audioContext.close().catch(() => {});
+      this.audioContext = null;
+    }
 
     if (this.sendTransport) {
       this.sendTransport.close();

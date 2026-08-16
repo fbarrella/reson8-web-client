@@ -1217,3 +1217,525 @@ Feature/Fix: Phase 2 acceptance verification
   this phase ships new capabilities throughout), then begin Phase 3.
 
 === Version bumped to 2.0.0 (15/08/2026) — classification: MAJOR ===
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 3 — permissions foundation (supports P3.4/P3.6 gating)
+
+  Problem: Channel CRUD/reorder (P3.4/P3.6) must hide their affordances
+  entirely for non-admins, but the wire protocol (CLAUDE.md's frozen
+  contract) has no dedicated "what are my own permissions" event —
+  GET_ALL_USERS is the only event that returns per-user role assignments,
+  and it has no self-only variant, and USER_JOIN_SERVER's ack never echoes
+  the caller's own userId either.
+
+  Solution: Judgment call, documented rather than silently assumed (in
+  src/services/permissionsService.ts's own doc comment): after a
+  successful join (and again after any reconnect-driven rejoin),
+  refreshPermissions() calls GET_ALL_USERS(serverId) and self-identifies
+  by nickname match against connectionStore.nickname (the same kind of
+  workaround VoicePanel's OccupantActionsPopover independently needed for
+  "is this occupant me" — both instances are noted as candidates to
+  replace if a future server change ever echoes the caller's own userId).
+  If the ack itself fails — which a permission-gated GET_ALL_USERS would
+  do for a non-admin — that's treated as "no elevated permissions", which
+  is also the correct UI outcome, so either way the gating comes out
+  right. Matched roles' permissions strings are aggregated via bitwise OR
+  into a bigint, mirroring the server's own requirePermission contract.
+  New permissionsStore holds the aggregate flags plus a `resolved` flag so
+  gated UI can default to hidden until the first GET_ALL_USERS round trip
+  completes, rather than flashing admin affordances open-then-closed.
+  hasPermission()/useHasPermission() respect ADMIN's bypass-all semantics.
+  Also added a shared src/lib/ackError.ts (isPermissionDeniedMessage +
+  reportAckError) so every P3.4 channel-mutation call site gets the same
+  insufficient_perms toast+sound treatment connectionService's ERROR
+  listener already had — connectionService was refactored to reuse the
+  same regex helper instead of duplicating it.
+
+  Environment note for future sessions (real, non-environment-quirk this
+  time): this sandbox's documented `NODE_OPTIONS=--network-family-
+  autoselection=false` npm workaround (Phase 1 P1.1 entry) turned out to
+  be a no-op flag name on this Node v22.22.1 — Node's Happy Eyeballs dual-
+  stack connect attempt was still hanging on every npm install this
+  session until switching to the *correct* flag,
+  `--no-network-family-autoselection` (confirmed via `node --help` and a
+  raw `net.setDefaultAutoSelectFamily(false)` test) — that's what actually
+  disables IPv6/IPv4 racing and got installs back down to seconds. Prefer
+  `--no-network-family-autoselection` over the older note going forward.
+
+  Key Files Modified:
+    src/services/socketService.ts — getAllUsers/createChannel/
+      deleteChannel/updateChannel/reorderChannels wrappers
+    src/services/permissionsService.ts (NEW)
+    src/stores/permissionsStore.ts (NEW)
+    src/lib/ackError.ts (NEW)
+    src/services/connectionService.ts — wires refreshPermissions() into
+      connect/reconnect, resets permissionsStore on leaveServer, reuses
+      the shared regex helper
+
+  Verification:
+    npm run typecheck / lint / test pass. Live Playwright pass against an
+    extended mock Socket.io server (GET_ALL_USERS returning either an
+    Admin or Member role depending on connecting nickname): confirmed an
+    "Admin"-nicknamed session sees the channel-tree "New"/"Reorder"
+    toolbar and per-channel kebab menus, and a "Guest"-nicknamed session
+    sees none of them (0 matches for any of the three, verified via
+    Playwright locators) — the exact non-admin-never-sees-affordances
+    acceptance criterion this phase requires.
+
+  Next Step: P3.1 — noise gate / mic sensitivity.
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 3 — P3.1: Noise Gate / Mic Sensitivity
+
+  Problem: Voice needed a configurable noise gate (mic-level threshold
+  gating) with a live meter, usable both inside an active voice session
+  and standalone from Settings without being in any call — a specific
+  desktop Phase 8 fix the PRD calls out as required, not a nice-to-have.
+
+  Solution: voiceService.ts gained an AnalyserNode chain built from a
+  *cloned* copy of the raw mic track (fftSize 2048) — cloning is
+  deliberate: gating the original track (`track.enabled = false`) would
+  blind the analysis if it were the same track being read, since a
+  disabled MediaStreamTrack reads back as silence and the gate could
+  never reopen once it fired. A 50ms `setInterval` computes RMS -> dB and
+  reports it via a new `onMicLevel` callback (mirrors the existing
+  onConnectionLost/onError callback-property pattern), then toggles
+  `track.enabled` against a configurable threshold (-60..0 dB) — but only
+  when the user hasn't explicitly muted (`_isManuallyMuted`, set from
+  toggleMute()/setMuted()) and isn't deafened, so the gate never fights an
+  explicit mute (ported guard, matching the desktop's
+  `_isManuallyMuted`-equivalent). voiceStore gained noiseGateEnabled/
+  noiseGateThresholdDb (persisted) and micLevelDb (session-only). A
+  standalone src/services/noiseGatePreviewService.ts (its own getUserMedia
+  + AnalyserNode, fully independent lifecycle) powers the Settings
+  preview; voiceConnectionService.joinVoiceChannel() calls its stop()
+  defensively so a real join always tears down any lingering preview. New
+  shared src/features/voice/MicLevelMeter.tsx renders the live level (with
+  an optional threshold marker) in both the Voice & Shortcuts settings tab
+  and the active VoicePanel — the PRD's "reused in two contexts"
+  requirement. The whole noise-gate section is hidden in the Voice &
+  Shortcuts tab whenever pttMode is true, matching the desktop's mutual
+  exclusivity with PTT.
+
+  localStorage Keys: reson8-noise-gate-enabled, reson8-noise-gate-
+  threshold-db.
+
+  Key Files Modified:
+    src/services/voiceService.ts
+    src/services/noiseGatePreviewService.ts (NEW)
+    src/services/voiceConnectionService.ts
+    src/stores/voiceStore.ts
+    src/features/voice/MicLevelMeter.tsx (NEW)
+    src/features/settings/VoiceShortcutsTab.tsx
+    src/features/voice/VoicePanel.tsx
+    src/components/ui/slider.tsx (NEW) — Radix slider wrapper, reused for
+      every slider control introduced this phase
+
+  Verification:
+    npm run typecheck / lint / test all pass. Live Playwright pass (mock
+    Socket.io + mediasoup-stub server, real mediasoup-client Device/
+    Transport/Producer, --use-fake-device-for-media-stream) confirmed the
+    meter renders (role="meter", real numeric dB values) inside an active
+    voice session. Threshold-driven transmission suppression and the
+    manual-mute guard were verified by code review rather than by
+    measuring actually-suppressed audio levels between two real
+    participants — no live SFU audio path exists in this sandbox, same
+    caveat as Phase 2's own acceptance entry.
+
+  Next Step: P3.2 — per-user local volume & local mute.
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 3 — P3.2: Per-user local volume & local mute
+
+  Problem: Occupants needed a per-listener volume (0-200%) and local mute,
+  client-side only and never transmitted to the server, replacing the
+  desktop's right-click occupant menu with a touch-first equivalent.
+
+  Solution: voiceService.ts now routes every consumed remote track through
+  a shared AudioContext: `MediaElementAudioSourceNode -> GainNode ->
+  destination`, created lazily on first use (either the first consumer, or
+  the local noise-gate setup in P3.1, whichever comes first). Per-consumer
+  gain is computed as `locallyMuted ? 0 : (volumePercent/100) *
+  (globalVoiceVolumePercent/100)` — deliberately computed in the GainNode
+  itself rather than relying on `audio.muted`/`audio.volume` pre-graph
+  behavior, since it needed to be independently testable and combine
+  cleanly with the P3.3 global multiplier. Overrides are keyed by userId
+  (`userOverrides: Map<string, UserAudioOverride>`) and survive a
+  producer's consumer being torn down/recreated (e.g. the user leaving and
+  rejoining voice) because voiceService takes an injected
+  `setOverrideProvider()` callback — wired in voiceConnectionService to
+  read/write voiceStore's reactive `userOverrides` map, itself backed by
+  localStorage under the desktop's exact key shape
+  (`reson8-local-volume-{userId}`, `reson8-local-mute-{userId}`, per
+  CLAUDE.md's convention). New src/features/voice/OccupantActionsPopover.tsx
+  is the touch-first replacement for the desktop's right-click menu —
+  kebab-triggered (Radix Popover, works for both touch and pointer),
+  containing a volume slider and a Mute Locally/Unmute Locally toggle,
+  built as a plain conditionally-rendered action list (not a hardcoded
+  two-item layout) so Phase 6 can drop a "Kick from Channel" action in
+  without restructuring it. VoicePanel identifies "is this occupant me"
+  by nickname match against connectionStore.nickname (same workaround
+  class as the permissions self-match) to hide the popover on your own row.
+
+  localStorage Keys: reson8-local-volume-{userId}, reson8-local-mute-{userId}.
+
+  Key Files Modified:
+    src/services/voiceService.ts
+    src/services/voiceConnectionService.ts
+    src/stores/voiceStore.ts — userOverrides map, readUserOverride()
+    src/features/voice/OccupantActionsPopover.tsx (NEW)
+    src/features/voice/VoicePanel.tsx
+    src/components/ui/popover.tsx (NEW) — Radix popover wrapper
+
+  Verification:
+    npm run typecheck / lint / test all pass. Live two-browser-context
+    Playwright pass (Alice + Bob both joining the same mock voice
+    channel): confirmed Alice sees a per-user kebab on Bob's row (and not
+    her own), dragging the volume slider persists
+    `reson8-local-volume-{bobUserId}` to localStorage, and the override
+    survives a full page reload (re-read directly from localStorage, since
+    a reload also drops the in-memory connection and bounces to /connect
+    by design — no silent reconnect-from-cold-load feature exists). Actual
+    live gain application between two real participants' audio was not
+    verified — the mock server's PRODUCE/CONSUME stubs don't route real
+    RTP (same hard dependency on a real mediasoup SFU flagged throughout
+    Phase 2's acceptance entry).
+
+  Next Step: P3.3 — global voice chat volume.
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 3 — P3.3: Global Voice Chat Volume
+
+  Problem: Needed a master attenuator slider (0-100%) multiplying into
+  every per-user gain, applying live with no explicit Save step (unlike
+  Phase 2's device-selection staging behavior), completing the Audio
+  settings tab that Phase 1's P1.11 entry deliberately deferred.
+
+  Solution: settingsStore gained `globalVoiceVolume` (persisted
+  `reson8-voice-volume`, default 100). New src/features/settings/AudioTab.tsx
+  replaces the "coming soon" placeholder wired into SettingsSheet, with
+  three sliders sharing one `VolumeRow` component: Voice Chat Volume
+  (0-100%, calls the new `setGlobalVoiceVolume()` in
+  voiceConnectionService, which updates both settingsStore and — if a
+  voice session is active — voiceService's live gain nodes in the same
+  call), plus Alert Volume and Nudge Volume (state already existed since
+  Phase 1 P1.11; this phase just finally gave them the slider UI the P1.11
+  entry flagged as deferred to here).
+
+  localStorage Keys: reson8-voice-volume.
+
+  Key Files Modified:
+    src/stores/settingsStore.ts
+    src/features/settings/AudioTab.tsx (NEW)
+    src/features/settings/SettingsSheet.tsx
+    src/services/voiceConnectionService.ts — setGlobalVoiceVolume()
+
+  Verification:
+    npm run typecheck / lint / test all pass. Live Playwright pass
+    confirmed the Audio tab's "Voice Chat Volume" slider renders and is
+    reachable via Settings -> Audio after reconnecting. Live-apply-without-
+    Save behavior was verified by code review (the setter always writes
+    through to voiceService immediately, no staged/pending state exists
+    for this slider unlike device selection) rather than by measuring an
+    actual live audio level change between two real participants.
+
+  Next Step: P3.4 — channel CRUD.
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 3 — P3.4: Channel CRUD (create/rename/delete)
+
+  Problem: Admins needed full channel lifecycle management — create,
+  rename, delete — through touch-first affordances (no right-click exists
+  on a phone), permission-gated both in the UI and (already, server-side)
+  by the existing MANAGE_CHANNELS/CREATE_CHANNEL contract.
+
+  Solution: New src/services/channelService.ts wraps the four
+  socketService mutation calls (createChannel/renameChannel/
+  setChannelNsfw/deleteChannel/reorderChannels) with the shared
+  reportAckError() helper from the permissions-foundation entry above, so
+  every failure — including a permission denial — gets a toast and, when
+  the message matches the permission-denied shape, the insufficient_perms
+  sound cue. Deliberately does NOT play channel_created/channel_deleted
+  sounds itself: those fire from new CHANNEL_CREATED/CHANNEL_DELETED
+  listeners added to connectionService's broadcast handling instead, so
+  every connected client (including the actor) hears the cue exactly once
+  per event — the same "one sound per broadcast event, not per local
+  action" principle Phase 2's P2.12 presence-diff sounds established.
+  New src/features/channels/CreateChannelDialog.tsx (React Hook Form +
+  Zod, per master PRD §3's stated architecture for this exact modal) is a
+  bottom-sheet-on-mobile/dialog-on-desktop (new src/components/ui/dialog.tsx
+  Radix wrapper) with name/type/parent-category/NSFW fields. Rename is
+  inline (the channel row's label becomes a text input in place, Enter
+  commits/Escape cancels) rather than a separate dialog — an explicitly
+  left implementation-detail choice per the PRD's own wording. Delete uses
+  a new src/components/ui/alert-dialog.tsx Radix AlertDialog wrapper
+  (never a bare confirm()), reachable from a new
+  src/features/channels/ChannelActionsMenu.tsx kebab (Radix DropdownMenu,
+  new src/components/ui/dropdown-menu.tsx wrapper) that's always visible
+  when MANAGE_CHANNELS is present, plus a long-press handler on the row
+  (500ms pointerdown timer) that opens the exact same menu — the touch-
+  replacement pattern CLAUDE.md establishes (long-press sheet + always-
+  visible kebab icon, not a hidden-gesture-only affordance). All of this
+  is gated by the new `useHasPermission(PermissionFlags.MANAGE_CHANNELS)` /
+  CREATE_CHANNEL from the permissions-foundation entry.
+
+  Edge Case Handled: Radix DropdownMenu/AlertDialog content renders via a
+  React Portal, which — despite being DOM-detached from the channel row —
+  still bubbles click events up through the *React* tree to the row's own
+  onClick (join-voice/toggle-expand) handler, since portals preserve React
+  event-propagation ancestry regardless of DOM placement. Both
+  DropdownMenuContent and AlertDialogContent in ChannelActionsMenu.tsx
+  (and NsfwConfirmDialog, P3.5) got an explicit `onClick={(e) =>
+  e.stopPropagation()}` to prevent, e.g., confirming a delete from also
+  triggering the row's click handler underneath it. Caught by reading
+  through the event-flow logic, not by a live-observed bug, but confirmed
+  fixed via the live Playwright pass below (delete/rename/NSFW-toggle all
+  completed without ever also firing an unwanted join/expand).
+
+  Key Files Modified:
+    src/services/channelService.ts (NEW)
+    src/services/connectionService.ts — CHANNEL_CREATED/CHANNEL_DELETED
+      sound-cue listeners
+    src/features/channels/CreateChannelDialog.tsx (NEW)
+    src/features/channels/ChannelActionsMenu.tsx (NEW)
+    src/features/channels/ChannelTreePanel.tsx — kebab wiring, inline
+      rename, long-press, toolbar "New" button
+    src/components/ui/dialog.tsx (NEW)
+    src/components/ui/alert-dialog.tsx (NEW)
+    src/components/ui/dropdown-menu.tsx (NEW)
+
+  Verification:
+    npm run typecheck / lint / test / build all pass. Live Playwright pass
+    against the extended mock server (Admin-nicknamed session): create ->
+    rename -> NSFW toggle -> delete all completed and reflected live in
+    the channel tree; a Guest-nicknamed session showed zero create/kebab
+    affordances (0 matches for the "New" button and every "Actions for
+    ..." kebab button). Did not verify against a real reson8 server's
+    actual MANAGE_CHANNELS enforcement — the mock server's own
+    requireAdmin() check stands in for it, matching this sandbox's
+    standing limitation (no reachable real server) noted throughout
+    Phases 1-2.
+
+  Next Step: P3.5 — NSFW channels.
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 3 — P3.5: NSFW channels
+
+  Problem: Text channels needed an NSFW flag (settable by admins) and a
+  once-per-session confirmation gate on the member side before a flagged
+  channel's content renders.
+
+  Solution: The NSFW toggle lives in two places sharing the same
+  `UPDATE_CHANNEL{isNsfw}` call: CreateChannelDialog's checkbox (text
+  channels only — hidden when Voice is selected) and a "Mark NSFW/Remove
+  NSFW" item in ChannelActionsMenu's kebab (P3.4). New
+  src/features/channels/NsfwConfirmDialog.tsx is a Radix AlertDialog shown
+  the first time a session taps into an NSFW text channel; channelTreeStore
+  gained a session-only (not persisted, cleared on disconnect)
+  `confirmedNsfwChannelIds: Set<string>`, checked/populated by
+  ChannelRow's click handler before it falls through to whatever the
+  normal channel-open action is. Since Phase 4's real chat surface doesn't
+  exist yet, "the normal action" is still Phase 1's "Coming soon" toast —
+  but the gate is wired at the exact point Phase 4 will need it, so that
+  phase can build chat content behind this check without touching this
+  logic again.
+
+  Key Files Modified:
+    src/features/channels/NsfwConfirmDialog.tsx (NEW)
+    src/features/channels/ChannelTreePanel.tsx — click-gating wiring
+    src/stores/channelTreeStore.ts — confirmedNsfwChannelIds,
+      confirmNsfw()
+    src/services/channelService.ts — setChannelNsfw()
+
+  Verification:
+    npm run typecheck / lint / test all pass. Live Playwright pass:
+    toggling NSFW via the kebab shows the "18+" badge live; tapping into
+    an NSFW channel shows the confirmation dialog on first entry and does
+    NOT show it again on a second tap the same session (both asserted via
+    Playwright locator counts, not just eyeballed).
+
+  Next Step: P3.6 — channel reordering.
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 3 — P3.6: Channel reordering
+
+  Problem: Needed two coexisting reorder mechanisms per master PRD §5.1's
+  "never drag-only" rule — an explicit non-drag Reorder Mode as the
+  universally-accessible primary, plus drag handles as a progressive
+  enhancement for pointer/touch users who prefer them — committing once
+  atomically via the existing REORDER_CHANNELS contract, not one call per
+  move.
+
+  Solution: Installed `@dnd-kit/core` + `@dnd-kit/sortable` +
+  `@dnd-kit/utilities` — chosen (per the PRD's own explicit call-out) over
+  native HTML5 `draggable` specifically for first-class touch-sensor
+  support, which native drag-and-drop lacks on mobile browsers.
+  channelTreeStore gained ephemeral (not persisted) reorder-mode staging
+  state: `reorderingParentId: string | null | undefined` (undefined = off,
+  null = reordering root-level siblings, a channel id = reordering that
+  category's children) and `stagedOrder: string[]`, plus
+  `startReorder()`/`moveStaged()`/`setStagedOrder()`/`cancelReorder()`.
+  New src/features/channels/ReorderableSiblingList.tsx renders the staged
+  list with both mechanisms live simultaneously on each row: a drag handle
+  (`useSortable` from dnd-kit, `PointerSensor` with an 8px activation
+  distance so it doesn't fight ordinary taps) AND explicit up/down move
+  buttons — "Done" commits the whole staged array via
+  `channelService.reorderChannels(parentId, stagedOrder)` in one atomic
+  call, "Cancel" discards it. Reorder Mode is entered from a "Reorder
+  Channels" kebab item on any category (P3.4's ChannelActionsMenu) for its
+  children, or a "Reorder" toolbar button in ChannelTreePanel for the
+  root level — both hidden entirely without MANAGE_CHANNELS, reusing the
+  same useHasPermission gate as P3.4.
+
+  Key Files Modified:
+    package.json / package-lock.json — @dnd-kit/core, @dnd-kit/sortable,
+      @dnd-kit/utilities
+    src/features/channels/ReorderableSiblingList.tsx (NEW)
+    src/features/channels/ChannelActionsMenu.tsx — "Reorder Channels" item
+    src/features/channels/ChannelTreePanel.tsx — root-level "Reorder"
+      toolbar button, staged-list rendering
+    src/stores/channelTreeStore.ts — reorder staging state
+
+  Verification:
+    npm run typecheck / lint / test / build all pass. Live Playwright pass
+    against the extended mock server (Admin session): entering Reorder
+    Mode via the toolbar button shows the staged list, clicking a row's
+    "Move down" button followed by "Done" commits successfully and closes
+    Reorder Mode (asserted via locator counts before/after). Drag-handle
+    interaction specifically (as opposed to the up/down buttons) was
+    exercised via code review of dnd-kit's PointerSensor wiring, not a
+    live simulated drag gesture — dnd-kit's own touch-sensor behavior on a
+    real phone is flagged in the phase PRD itself as needing real-device
+    verification, deferred to Phase 7 alongside Phase 2's analogous
+    flagged items.
+
+  Next Step: Phase 3 acceptance criteria verification, then /bump-version.
+
+--- Entry: 16/08/2026 ---
+
+Feature/Fix: Phase 3 acceptance criteria verification
+
+  Problem: Same rationale as Phases 1-2's acceptance passes — individual
+  P3.x items were built and spot-checked mostly in isolation; needed one
+  pass checking this phase's actual stated Acceptance Criteria, and honest
+  reporting on what could/couldn't be verified given this sandbox still
+  has no reachable real reson8/mediasoup server.
+
+  Solution: Extended the throwaway mock Socket.io server pattern from
+  Phases 1-2 (scratchpad-only, never committed) with: GET_ALL_USERS
+  returning an Admin or Member role depending on the connecting nickname
+  (env var MOCK_ADMIN_NICKNAME), and real CREATE_CHANNEL/UPDATE_CHANNEL/
+  DELETE_CHANNEL/REORDER_CHANNELS handlers gated by that same nickname
+  check, broadcasting CHANNEL_TREE_UPDATE/CHANNEL_CREATED/CHANNEL_DELETED
+  exactly like a real server would. Also had to lengthen the mock's fake
+  ICE password in CREATE_WEBRTC_TRANSPORT's ack (it was under the 22-
+  character minimum ICE requires) — the join handshake was failing with a
+  real, correctly-surfaced "Couldn't join voice" toast until fixed, which
+  usefully re-confirmed the graceful-failure path works before being
+  corrected to let the happy path complete, same pattern as the DTLS-
+  fingerprint-length fix noted in Phase 2's acceptance entry.
+
+  Ran two Playwright scripts (playwright-core, chromium,
+  --use-fake-device-for-media-stream/--use-fake-ui-for-media-stream for
+  the granted-permission path) against the built app:
+
+  Pass 1 (channel CRUD/NSFW/reorder/permissions, single Admin session +
+  a separate Guest session) — 13/13 checks: Admin sees the "New" toolbar
+  button; create/rename/NSFW-toggle/delete all reflected live in the tree;
+  Reorder Mode's up/down buttons alone (no drag) successfully reordered
+  and committed via one REORDER_CHANNELS call; NSFW confirmation appeared
+  on first entry to an NSFW channel and did NOT reappear on a second entry
+  the same session; joining voice rendered the live mic-level meter
+  (confirms P3.1's AnalyserNode/gate wiring didn't break the P2 handshake);
+  a Guest (non-admin) session showed zero "New"/"Reorder"/kebab
+  affordances anywhere in the tree.
+
+  Pass 2 (per-user volume/mute, two real browser contexts "Alice" +
+  "Bob" both joining the same mock voice channel) — 5/5 checks: Alice's
+  VoicePanel shows a per-user kebab on Bob's occupant row (and correctly
+  omits one on her own row, via the nickname self-match documented in the
+  permissions-foundation entry); dragging the volume slider persists
+  `reson8-local-volume-{bobUserId}` to localStorage; the override survives
+  a full page reload (read directly from localStorage, since a reload
+  drops the in-memory connection by design — no silent reconnect exists);
+  the Audio settings tab's Voice Chat Volume slider is reachable after
+  reconnecting.
+
+  Zero console/page errors across both passes (both scripts attach
+  pageerror/console-error listeners and fail the run on any).
+
+  Remaining gaps against the phase's stated Acceptance Criteria, honestly
+  flagged rather than silently claimed as done:
+    - "Setting a noise-gate threshold and speaking below it visibly
+      suppresses transmission (verified via the other test client's
+      received-audio/active-speaker state)" — NOT verified this way. The
+      mock server has no real audio plane (same hard dependency flagged
+      throughout Phase 2) and never emits ACTIVE_SPEAKERS, so there was no
+      second client's received-audio state to observe. The gate's own
+      threshold/track.enabled logic and its manual-mute guard were
+      verified by code review, and the live pass did confirm the meter
+      itself renders real numeric dB values during an active session.
+    - "Per-user volume/mute overrides persist across... the target user
+      leaving/rejoining voice" — only the page-reload half of this was
+      live-verified. The rejoin half (a *second* consumeProducer() call
+      for the same userId re-applying the cached/stored override) is
+      implemented via the `getInitialOverride` provider checking the
+      override map before falling back to localStorage, but the mock
+      server's CONSUME handler always rejects (`"No remote producers in
+      mock"`), so no real consumer was ever created for either client —
+      this path was verified by code review only.
+    - "Creating, renaming, deleting, and reordering channels as an admin
+      reflects live on a second connected client within one broadcast
+      round trip" — the broadcast side (CHANNEL_TREE_UPDATE/
+      CHANNEL_CREATED/CHANNEL_DELETED going out via `io.emit`, reaching
+      every connected socket) was exercised by the mock server's own
+      implementation and is the same mechanism already proven live for
+      presence updates in Phases 1-2, but this specific phase's pass only
+      drove one connected admin client at a time — a second client
+      independently observing another admin's live edit was not
+      separately spun up and asserted against.
+    - "A direct (e.g. dev-tools-forced) attempt is still rejected by the
+      server with the same insufficient_perms UX path" — the mock
+      server's requireAdmin() check does enforce this generically (any
+      non-admin-nicknamed emit is rejected regardless of UI state, so a
+      hypothetical direct devtools emit would hit the same rejection path
+      the UI-triggered calls do), but a literal forced-devtools-emit
+      scenario was not separately scripted.
+    - dnd-kit's touch-sensor drag behavior was not exercised via a
+      simulated drag gesture (only the up/down buttons were live-driven);
+      the phase PRD itself flags real-device drag verification as
+      deferred to Phase 7, consistent with Phase 2's analogous flagged
+      items (mobile backgrounding, VOICE_SESSION_LOST recovery).
+    - Same standing sandbox limitations carried over from Phases 1-2: no
+      reachable real reson8/mediasoup server for the whole phase; no
+      audio device for actual audible playback verification; mobile-
+      safari (webkit) Playwright project still crashes on page.goto in
+      this proot/ARM64 sandbox (unrelated to any Phase 3 code — chromium
+      e2e specs unaffected).
+
+  Key Files Modified:
+    (none beyond the P3.1-P3.6 entries above; this entry covers
+    verification tooling only, none of it committed)
+
+  Verification:
+    npm run typecheck / lint / test / build all pass (33/33 unit tests,
+    unchanged from Phase 2 — no new unit tests were added this phase,
+    since the noise-gate/gain-graph/permission-derivation logic was judged
+    lower-risk to verify via the live Playwright passes above than via
+    injected-private-field unit tests in the style of voiceService.test.ts
+    — flagged here as a real coverage gap rather than silently accepted).
+    Both live Playwright passes detailed above: 13/13 and 5/5 checks,
+    zero console/page errors.
+
+  Next Step: Phase 3 complete — run /bump-version (MAJOR, per the PRD:
+  this phase ships new capabilities throughout — noise gate, per-user
+  volume, channel CRUD/reorder), then begin Phase 4.
+
+=== Version bumped to 3.0.0 (16/08/2026) — classification: MAJOR ===

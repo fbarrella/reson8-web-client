@@ -1,9 +1,12 @@
 import { socketService, type ResonSocket } from "@/services/socketService";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useChannelTreeStore } from "@/stores/channelTreeStore";
+import { usePermissionsStore } from "@/stores/permissionsStore";
 import { toast } from "@/stores/toastStore";
 import { soundAlert } from "@/lib/soundAlert";
+import { isPermissionDeniedMessage } from "@/lib/ackError";
 import * as voiceConnectionService from "@/services/voiceConnectionService";
+import { refreshPermissions } from "@/services/permissionsService";
 import type { ServerToClientEvents } from "@/types/reson8-protocol";
 
 const PING_INTERVAL_MS = 3000;
@@ -36,9 +39,15 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
     useChannelTreeStore.getState().updatePresence(payload.channelId, payload.occupants);
     voiceConnectionService.handlePresenceUpdateForVoice(payload);
   };
+  const handleChannelCreated: ServerToClientEvents["CHANNEL_CREATED"] = () => {
+    soundAlert.play("channel_created");
+  };
+  const handleChannelDeleted: ServerToClientEvents["CHANNEL_DELETED"] = () => {
+    soundAlert.play("channel_deleted");
+  };
   const handleError: ServerToClientEvents["ERROR"] = (payload) => {
     toast({ title: "Server error", description: payload.message, variant: "destructive" });
-    if (/permission/i.test(payload.code) || /permission/i.test(payload.message)) {
+    if (isPermissionDeniedMessage(payload.code) || isPermissionDeniedMessage(payload.message)) {
       soundAlert.play("insufficient_perms");
     }
   };
@@ -68,6 +77,7 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
         // The server session is back — now safe to replay a voice-channel
         // join, if one was active (Phase 2 PRD P2.10).
         voiceConnectionService.rejoinVoiceIfNeeded();
+        void refreshPermissions();
       });
   };
   const handleReconnectFailed = () => {
@@ -81,6 +91,8 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
 
   socket.on("CHANNEL_TREE_UPDATE", handleTreeUpdate);
   socket.on("PRESENCE_UPDATE", handlePresenceUpdate);
+  socket.on("CHANNEL_CREATED", handleChannelCreated);
+  socket.on("CHANNEL_DELETED", handleChannelDeleted);
   socket.on("ERROR", handleError);
   socket.on("disconnect", handleDisconnect);
   socket.io.on("reconnect", handleReconnect);
@@ -96,6 +108,8 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
     stopPing();
     socket.off("CHANNEL_TREE_UPDATE", handleTreeUpdate);
     socket.off("PRESENCE_UPDATE", handlePresenceUpdate);
+    socket.off("CHANNEL_CREATED", handleChannelCreated);
+    socket.off("CHANNEL_DELETED", handleChannelDeleted);
     socket.off("ERROR", handleError);
     socket.off("disconnect", handleDisconnect);
     socket.io.off("reconnect", handleReconnect);
@@ -157,6 +171,7 @@ export function connectToServer(params: ConnectParams): Promise<ConnectResult> {
           cleanupLifecycle = attachLifecycleListeners(socket, params);
           useConnectionStore.getState().setConnected(ack.serverId ?? "", nickname);
           soundAlert.play("connected");
+          void refreshPermissions();
           resolve({ success: true });
         });
     };
@@ -175,4 +190,5 @@ export function leaveServer(): void {
   socketService.disconnect();
   useConnectionStore.getState().reset();
   useChannelTreeStore.getState().reset();
+  usePermissionsStore.getState().reset();
 }

@@ -1,6 +1,6 @@
 # Reson8 Web Client
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](#)
+[![Version](https://img.shields.io/badge/version-3.0.0-blue.svg)](#)
 
 A mobile-first, fully responsive Progressive Web App client for [Reson8](../reson8) — a self-hosted voice & text communication server. Built with React, TypeScript, and Vite. This is an independent client for the existing `reson8` server; it does not modify the server or its protocol.
 

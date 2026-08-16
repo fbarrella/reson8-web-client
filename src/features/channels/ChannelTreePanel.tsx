@@ -1,13 +1,22 @@
-import { useState } from "react";
-import { ChevronDown, ChevronRight, Hash, Volume2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ChevronDown, ChevronRight, Hash, Volume2, Plus, ArrowUpDown } from "lucide-react";
 
 import { useChannelTreeStore } from "@/stores/channelTreeStore";
 import { useVoiceStore } from "@/stores/voiceStore";
-import { ChannelType, type IChannelTreeNode } from "@/types/reson8-protocol";
+import { useHasPermission } from "@/stores/permissionsStore";
+import { ChannelType, PermissionFlags, type IChannelTreeNode } from "@/types/reson8-protocol";
 import { toast } from "@/stores/toastStore";
 import { joinVoiceChannel } from "@/services/voiceConnectionService";
+import { renameChannel } from "@/services/channelService";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ChannelActionsMenu } from "@/features/channels/ChannelActionsMenu";
+import { NsfwConfirmDialog } from "@/features/channels/NsfwConfirmDialog";
+import { CreateChannelDialog } from "@/features/channels/CreateChannelDialog";
+import { ReorderableSiblingList } from "@/features/channels/ReorderableSiblingList";
+
+const LONG_PRESS_MS = 500;
 
 function initials(nickname: string): string {
   return nickname.slice(0, 2).toUpperCase();
@@ -16,13 +25,28 @@ function initials(nickname: string): string {
 function ChannelRow({ node, depth }: { node: IChannelTreeNode; depth: number }) {
   const [expanded, setExpanded] = useState(true);
   const [joining, setJoining] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState(node.name);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [nsfwConfirmOpen, setNsfwConfirmOpen] = useState(false);
   const hasChildren = node.children.length > 0;
   const isVoice = node.type === ChannelType.VOICE;
   const currentVoiceChannelId = useVoiceStore((s) => s.currentChannelId);
   const activeSpeakerUserIds = useVoiceStore((s) => s.activeSpeakerUserIds);
   const isCurrentVoiceChannel = isVoice && node.id === currentVoiceChannelId;
+  const canManageChannels = useHasPermission(PermissionFlags.MANAGE_CHANNELS);
+  const isNsfwConfirmed = useChannelTreeStore((s) => s.confirmedNsfwChannelIds.has(node.id));
+  const confirmNsfw = useChannelTreeStore((s) => s.confirmNsfw);
+  const reorderingParentId = useChannelTreeStore((s) => s.reorderingParentId);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressFired = useRef(false);
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
-  const handleClick = () => {
+  useEffect(() => {
+    if (renaming) renameInputRef.current?.focus();
+  }, [renaming]);
+
+  const proceedWithClick = () => {
     if (hasChildren) {
       setExpanded((e) => !e);
       return;
@@ -49,6 +73,41 @@ function ChannelRow({ node, depth }: { node: IChannelTreeNode; depth: number }) 
     });
   };
 
+  const handleClick = () => {
+    if (longPressFired.current) {
+      longPressFired.current = false;
+      return;
+    }
+    // NSFW confirmation gates first entry to a text channel this session
+    // (Phase 3 PRD P3.5) — only meaningful once Phase 4 renders real chat
+    // content, but the gate is wired now so that surface can build behind it.
+    if (!isVoice && !hasChildren && node.isNsfw && !isNsfwConfirmed) {
+      setNsfwConfirmOpen(true);
+      return;
+    }
+    proceedWithClick();
+  };
+
+  const startLongPress = () => {
+    if (!canManageChannels || renaming) return;
+    longPressTimer.current = setTimeout(() => {
+      longPressFired.current = true;
+      setMenuOpen(true);
+    }, LONG_PRESS_MS);
+  };
+  const cancelLongPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+
+  const commitRename = () => {
+    const trimmed = renameValue.trim();
+    setRenaming(false);
+    if (trimmed && trimmed !== node.name) void renameChannel(node.id, trimmed);
+  };
+
   return (
     <li>
       <div
@@ -62,8 +121,13 @@ function ChannelRow({ node, depth }: { node: IChannelTreeNode; depth: number }) 
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           isCurrentVoiceChannel && "bg-accent/60 text-accent-foreground",
         )}
-        onClick={handleClick}
+        onClick={renaming ? undefined : handleClick}
+        onPointerDown={renaming ? undefined : startLongPress}
+        onPointerUp={cancelLongPress}
+        onPointerLeave={cancelLongPress}
+        onPointerCancel={cancelLongPress}
         onKeyDown={(e) => {
+          if (renaming) return;
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             (e.currentTarget as HTMLElement).click();
@@ -86,7 +150,25 @@ function ChannelRow({ node, depth }: { node: IChannelTreeNode; depth: number }) 
           <Hash className="size-4 shrink-0 text-muted-foreground" />
         )}
 
-        <span className="flex-1 truncate">{node.name}</span>
+        {renaming ? (
+          <input
+            ref={renameInputRef}
+            value={renameValue}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitRename();
+              if (e.key === "Escape") {
+                setRenameValue(node.name);
+                setRenaming(false);
+              }
+            }}
+            className="min-w-0 flex-1 rounded-md border border-input bg-transparent px-1.5 py-0.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        ) : (
+          <span className="flex-1 truncate">{node.name}</span>
+        )}
 
         {node.isNsfw && (
           <Badge variant="destructive" className="shrink-0">
@@ -108,7 +190,30 @@ function ChannelRow({ node, depth }: { node: IChannelTreeNode; depth: number }) 
         {isVoice && node.occupants.length > 0 && (
           <span className="shrink-0 text-xs text-muted-foreground">{node.occupants.length}</span>
         )}
+
+        {canManageChannels && !renaming && (
+          <ChannelActionsMenu
+            node={node}
+            open={menuOpen}
+            onOpenChange={setMenuOpen}
+            onRename={() => {
+              setRenameValue(node.name);
+              setRenaming(true);
+            }}
+          />
+        )}
       </div>
+
+      <NsfwConfirmDialog
+        open={nsfwConfirmOpen}
+        onOpenChange={setNsfwConfirmOpen}
+        channelName={node.name}
+        onConfirm={() => {
+          confirmNsfw(node.id);
+          setNsfwConfirmOpen(false);
+          proceedWithClick();
+        }}
+      />
 
       {isVoice && node.occupants.length > 0 && (
         <ul className="flex flex-col gap-0.5" style={{ paddingLeft: `${depth * 16 + 32}px` }}>
@@ -135,7 +240,11 @@ function ChannelRow({ node, depth }: { node: IChannelTreeNode; depth: number }) 
         </ul>
       )}
 
-      {hasChildren && expanded && (
+      {hasChildren && expanded && reorderingParentId === node.id && (
+        <ReorderableSiblingList parentId={node.id} siblings={node.children} depth={depth + 1} />
+      )}
+
+      {hasChildren && expanded && reorderingParentId !== node.id && (
         <ul>
           {node.children.map((child) => (
             <ChannelRow key={child.id} node={child} depth={depth + 1} />
@@ -148,11 +257,38 @@ function ChannelRow({ node, depth }: { node: IChannelTreeNode; depth: number }) 
 
 export function ChannelTreePanel({ className }: { className?: string }) {
   const tree = useChannelTreeStore((s) => s.tree);
+  const reorderingParentId = useChannelTreeStore((s) => s.reorderingParentId);
+  const startReorder = useChannelTreeStore((s) => s.startReorder);
+  const canManageChannels = useHasPermission(PermissionFlags.MANAGE_CHANNELS);
+  const canCreateChannel = useHasPermission(PermissionFlags.CREATE_CHANNEL) || canManageChannels;
+  const [createOpen, setCreateOpen] = useState(false);
 
   return (
-    <nav aria-label="Channels" className={cn("overflow-y-auto p-2", className)}>
+    <nav aria-label="Channels" className={cn("flex flex-col overflow-y-auto p-2", className)}>
+      {(canCreateChannel || canManageChannels) && (
+        <div className="mb-1 flex items-center justify-end gap-1">
+          {canManageChannels && tree.length > 1 && reorderingParentId === undefined && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => startReorder(null, tree.map((n) => n.id))}
+            >
+              <ArrowUpDown className="size-4" /> Reorder
+            </Button>
+          )}
+          {canCreateChannel && (
+            <Button type="button" variant="ghost" size="sm" onClick={() => setCreateOpen(true)}>
+              <Plus className="size-4" /> New
+            </Button>
+          )}
+        </div>
+      )}
+
       {tree.length === 0 ? (
         <p className="p-4 text-sm text-muted-foreground">No channels yet.</p>
+      ) : reorderingParentId === null ? (
+        <ReorderableSiblingList parentId={null} siblings={tree} depth={0} />
       ) : (
         <ul>
           {tree.map((node) => (
@@ -160,6 +296,8 @@ export function ChannelTreePanel({ className }: { className?: string }) {
           ))}
         </ul>
       )}
+
+      <CreateChannelDialog open={createOpen} onOpenChange={setCreateOpen} />
     </nav>
   );
 }

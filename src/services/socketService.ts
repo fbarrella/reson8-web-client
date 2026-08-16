@@ -1,5 +1,5 @@
 import { io, type Socket } from "socket.io-client";
-import type { ClientToServerEvents, ServerToClientEvents } from "@/types/reson8-protocol";
+import type { ClientToServerEvents, ServerToClientEvents, IRole, IUser } from "@/types/reson8-protocol";
 
 export type ResonSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -147,6 +147,56 @@ class SocketService {
   setVoiceState(isMuted: boolean, isDeafened: boolean): Promise<{ success: boolean }> {
     return new Promise((resolve) => {
       this.instance.emit("SET_VOICE_STATE", { isMuted, isDeafened }, resolve);
+    });
+  }
+
+  // ── Roles / permissions (Phase 3 PRD P3.4 gating; full Roles UI is Phase 6) ──
+
+  getAllUsers(
+    serverId: string,
+  ): Promise<{ success: boolean; users?: Array<IUser & { roles: IRole[] }>; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("GET_ALL_USERS", { serverId }, resolve);
+    });
+  }
+
+  // ── Channel CRUD / reorder (Phase 3 PRD P3.4 / P3.6) ────────────────────
+
+  createChannel(payload: {
+    serverId: string;
+    name: string;
+    type: "TEXT" | "VOICE";
+    parentId?: string | null;
+    isNsfw?: boolean;
+  }): Promise<{ success: boolean; channelId?: string; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("CREATE_CHANNEL", payload, resolve);
+    });
+  }
+
+  deleteChannel(channelId: string): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("DELETE_CHANNEL", { channelId }, resolve);
+    });
+  }
+
+  updateChannel(payload: {
+    channelId: string;
+    name?: string;
+    position?: number;
+    isNsfw?: boolean;
+  }): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("UPDATE_CHANNEL", payload, resolve);
+    });
+  }
+
+  reorderChannels(
+    parentId: string | null,
+    orderedChannelIds: string[],
+  ): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      this.instance.emit("REORDER_CHANNELS", { parentId, orderedChannelIds }, resolve);
     });
   }
 }
