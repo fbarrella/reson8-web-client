@@ -1,0 +1,100 @@
+import { useEffect } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { ChevronLeft, Hash, X } from "lucide-react";
+
+import { useChannelTreeStore } from "@/stores/channelTreeStore";
+import { useChatStore } from "@/stores/chatStore";
+import { ChannelType } from "@/types/reson8-protocol";
+import { ChatPane } from "@/features/chat/ChatPane";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
+
+/**
+ * Mobile (`base`): this route IS the pushed nav-stack destination — one pane
+ * at a time, with an explicit header back button in addition to the
+ * browser/OS back gesture (a real route makes that correct for free).
+ * `md:`/`lg:`: a Tabs strip across the top lets several channels stay open
+ * simultaneously, matching the desktop client's literal tabbed-chat model —
+ * the URL stays the single source of truth for which one is active; the
+ * strip just remembers which channels have been visited this session
+ * (Phase 4 PRD P4.1).
+ */
+export function ChatRoute() {
+  const { channelId } = useParams<{ channelId: string }>();
+  const navigate = useNavigate();
+  const node = useChannelTreeStore((s) => (channelId ? s.nodesById.get(channelId) : undefined));
+  const openChannelIds = useChatStore((s) => s.openChannelIds);
+  const nodesById = useChannelTreeStore((s) => s.nodesById);
+  const unreadChannelIds = useChatStore((s) => s.unreadChannelIds);
+
+  useEffect(() => {
+    if (!channelId || node?.type === ChannelType.VOICE) return;
+    useChatStore.getState().openChannel(channelId);
+  }, [channelId, node?.type]);
+
+  if (!channelId || node?.type === ChannelType.VOICE) {
+    return null;
+  }
+
+  const closeTab = (id: string) => {
+    useChatStore.getState().closeChannel(id);
+    if (id !== channelId) return;
+    const remaining = openChannelIds.filter((openId) => openId !== id);
+    navigate(remaining.length > 0 ? `/app/channels/${remaining[remaining.length - 1]}` : "/app");
+  };
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      {/* base: full-screen header with explicit back navigation */}
+      <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-2 lg:hidden">
+        <button
+          type="button"
+          aria-label="Back to channels"
+          onClick={() => navigate("/app")}
+          className="flex size-11 items-center justify-center text-muted-foreground hover:text-foreground"
+        >
+          <ChevronLeft className="size-5" />
+        </button>
+        <Hash className="size-4 text-muted-foreground" />
+        <span className="truncate text-sm font-semibold text-foreground">{node?.name ?? "Channel"}</span>
+      </div>
+
+      {/* md:/lg: tabs strip for multiple simultaneously-open channels */}
+      <Tabs value={channelId} onValueChange={(id) => navigate(`/app/channels/${id}`)} className="hidden lg:block">
+        <TabsList>
+          {openChannelIds.map((id) => {
+            const tabNode = nodesById.get(id);
+            return (
+              <TabsTrigger key={id} value={id} asChild>
+                <div role="tab" className="group/tab cursor-pointer">
+                  <Hash className="size-3.5" />
+                  <span className="max-w-32 truncate">{tabNode?.name ?? id}</span>
+                  {unreadChannelIds.has(id) && id !== channelId && (
+                    <span aria-label="Unread" className="size-1.5 shrink-0 rounded-full bg-primary" />
+                  )}
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    aria-label={`Close ${tabNode?.name ?? "tab"}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      closeTab(id);
+                    }}
+                    className={cn(
+                      "ml-0.5 flex size-5 items-center justify-center rounded hover:bg-accent",
+                      "opacity-0 group-hover/tab:opacity-100 focus-visible:opacity-100",
+                    )}
+                  >
+                    <X className="size-3" />
+                  </button>
+                </div>
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
+      </Tabs>
+
+      <ChatPane channelId={channelId} />
+    </div>
+  );
+}

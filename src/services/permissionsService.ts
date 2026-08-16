@@ -38,6 +38,9 @@ export async function refreshPermissions(): Promise<void> {
       usePermissionsStore.getState().setFlags(0n);
       return;
     }
+    if (!useConnectionStore.getState().selfUserId) {
+      useConnectionStore.getState().setSelfUserId(self.id);
+    }
 
     let flags = 0n;
     for (const role of self.roles) {

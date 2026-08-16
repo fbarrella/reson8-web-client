@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { ChevronDown, ChevronRight, Hash, Volume2, Plus, ArrowUpDown } from "lucide-react";
 
 import { useChannelTreeStore } from "@/stores/channelTreeStore";
 import { useVoiceStore } from "@/stores/voiceStore";
+import { useChatStore } from "@/stores/chatStore";
 import { useHasPermission } from "@/stores/permissionsStore";
 import { ChannelType, PermissionFlags, type IChannelTreeNode } from "@/types/reson8-protocol";
 import { toast } from "@/stores/toastStore";
@@ -41,6 +43,8 @@ function ChannelRow({ node, depth }: { node: IChannelTreeNode; depth: number }) 
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFired = useRef(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
+  const isUnread = useChatStore((s) => s.unreadChannelIds.has(node.id));
 
   useEffect(() => {
     if (renaming) renameInputRef.current?.focus();
@@ -52,7 +56,7 @@ function ChannelRow({ node, depth }: { node: IChannelTreeNode; depth: number }) 
       return;
     }
     if (!isVoice) {
-      toast({ title: "Coming soon", description: "Chat lands in a later phase." });
+      navigate(`/app/channels/${node.id}`);
       return;
     }
     if (isCurrentVoiceChannel || joining) return;
@@ -176,7 +180,7 @@ function ChannelRow({ node, depth }: { node: IChannelTreeNode; depth: number }) 
           </Badge>
         )}
 
-        {!isVoice && node.hasUnread && (
+        {!isVoice && !hasChildren && isUnread && (
           <span
             aria-label="Unread messages"
             className="size-2 shrink-0 rounded-full bg-primary"

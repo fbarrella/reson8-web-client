@@ -1,6 +1,7 @@
 import { NavLink } from "react-router-dom";
 import { Hash, MessageSquare, Mail, Mic } from "lucide-react";
 
+import { useChatStore } from "@/stores/chatStore";
 import { cn } from "@/lib/utils";
 
 const TABS = [
@@ -13,8 +14,11 @@ const TABS = [
 /**
  * Mobile-only bottom tab bar (master PRD §5.1). Settings is reached via a
  * header icon, not a tab slot, so this always has exactly 4 destinations.
+ * Chat's badge = total unread channels (Phase 4 PRD P4.6).
  */
 export function BottomTabBar() {
+  const hasUnread = useChatStore((s) => s.unreadChannelIds.size > 0);
+
   return (
     <nav
       aria-label="Primary"
@@ -27,12 +31,20 @@ export function BottomTabBar() {
           end={end}
           className={({ isActive }) =>
             cn(
-              "flex flex-1 flex-col items-center justify-center gap-1 text-xs",
+              "relative flex flex-1 flex-col items-center justify-center gap-1 text-xs",
               isActive ? "text-primary" : "text-muted-foreground",
             )
           }
         >
-          <Icon className="size-5" />
+          <span className="relative">
+            <Icon className="size-5" />
+            {to === "/app/chat" && hasUnread && (
+              <span
+                aria-label="Unread"
+                className="absolute -top-0.5 -right-1 size-2 rounded-full bg-primary ring-2 ring-card"
+              />
+            )}
+          </span>
           {label}
         </NavLink>
       ))}
