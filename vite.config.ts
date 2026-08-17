@@ -17,7 +17,16 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: "prompt",
-      strategies: "generateSW",
+      // Phase 1 shipped `generateSW` as a baseline (see that phase's PRD
+      // note); Phase 7 P7.2 switches to `injectManifest` for the custom
+      // sw.ts logic the controlled update UX needs — see
+      // src/services/swUpdateService.ts and src/sw.ts.
+      strategies: "injectManifest",
+      srcDir: "src",
+      filename: "sw.ts",
+      injectManifest: {
+        globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
+      },
       manifest: {
         name: "Reson8",
         short_name: "Reson8",
@@ -36,9 +45,6 @@ export default defineConfig({
             purpose: "maskable",
           },
         ],
-      },
-      workbox: {
-        globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
       },
     }),
   ],

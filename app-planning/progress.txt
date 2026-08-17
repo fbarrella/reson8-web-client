@@ -2846,3 +2846,119 @@ Feature/Fix: Phase 7 — P7.1: Manifest & installability
 
   Next Step: P7.2 — service worker update flow (switch vite-plugin-pwa
   from generateSW to injectManifest mode).
+
+--- Entry: 17/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.2: Service worker update flow
+
+  Problem: Phase 1's `generateSW` baseline auto-generates a stock service
+  worker with no room for custom lifecycle logic. Reson8 needs a controlled
+  update UX instead: silently auto-updating could yank the SW out from
+  under an active voice/chat session, but silently doing nothing (the
+  default for most Workbox setups) means users never get fixes without a
+  manual hard-refresh — the direct conceptual replacement for
+  electron-updater's check/download/install flow.
+
+  Solution: Switched `vite-plugin-pwa` to `injectManifest` mode
+  (`strategies: "injectManifest"`, `srcDir: "src"`, `filename: "sw.ts"` in
+  `vite.config.ts`), which bundles a hand-written service worker instead of
+  generating one. New `src/sw.ts`: `precacheAndRoute(self.__WB_MANIFEST)` +
+  `cleanupOutdatedCaches()` from `workbox-precaching` (same app-shell-only
+  precaching Phase 1 already had — master PRD §5.4, no runtime/offline-data
+  caching), a `message` listener that calls `self.skipWaiting()` only on an
+  explicit `{type: "SKIP_WAITING"}` postMessage (never automatically on
+  install), and `clientsClaim()` on `activate`. Installed `workbox-core`
+  and `workbox-precaching` as real devDependencies (`^7.4.1`, matching
+  `vite-plugin-pwa`'s bundled `workbox-build` version) rather than leaving
+  them as phantom transitive deps, since `sw.ts` imports from them
+  directly. Added `tsconfig.sw.json` (lib: `ES2023` + `WebWorker`, no DOM)
+  referenced from `tsconfig.json` and excluded from `tsconfig.app.json`'s
+  `include` — the service worker global scope conflicts with the app's
+  DOM-lib tsconfig, same pattern as the existing `tsconfig.node.json` split
+  for `vite.config.ts`.
+
+  Extended the generic toast system (Phase 1 P1.12) with two capabilities
+  every future phase can reuse: a `persistent` flag on `toast()`
+  (`src/stores/toastStore.ts`) that skips the 5s auto-dismiss timer, and an
+  `action: {label, onClick}` for an inline button (`src/components/ui/
+  toaster.tsx`) — the update prompt must never auto-dismiss (would
+  silently drop an available update) and needs a Reload action, not just a
+  passive message.
+
+  New `src/services/swUpdateService.ts` calls `virtual:pwa-register`'s
+  `registerSW({onNeedRefresh, onRegisterError})`; when a new SW reaches the
+  `waiting` state, shows the persistent toast ("A new version is available"
+  / "Reload to update Reson8." / Reload button) wired to the `updateSW()`
+  function `registerSW()` returns, which sends the `SKIP_WAITING` message
+  via workbox-window — `registerSW`'s own default behavior then reloads the
+  page once the new SW actually takes control (`onNeedReload` left
+  unset), satisfying "Reload triggers skipWaiting() + clients.claim() + a
+  page reload" without this app needing to drive that sequence by hand.
+  Wired `initServiceWorkerUpdateFlow()` into `main.tsx` alongside the
+  existing one-time init calls. Added `/// <reference types="vite-plugin-
+  pwa/client" />` to `src/vite-env.d.ts` so `virtual:pwa-register` resolves.
+
+  Lint fix along the way: `sw.ts`'s message listener accessed
+  `event.data.type` where `event.data` is typed `any` per the DOM/WebWorker
+  `MessageEvent` spec, tripping `@typescript-eslint/no-unsafe-member-
+  access`. Replaced with an explicit `isSkipWaitingMessage(data: unknown)`
+  type guard.
+
+  PWA/Service Worker Changes:
+    Precache manifest generation, cache versioning/cleanup, and the
+    installability manifest itself are unchanged from Phase 1/P7.1 — only
+    the *strategy* (generated vs. hand-written SW) and the update-signaling
+    logic are new this item.
+
+  Key Files Modified:
+    vite.config.ts — strategies/srcDir/filename/injectManifest options
+    src/sw.ts (NEW)
+    src/services/swUpdateService.ts (NEW)
+    src/stores/toastStore.ts — persistent + action support
+    src/components/ui/toaster.tsx — renders the action button
+    src/main.tsx — initServiceWorkerUpdateFlow() call
+    src/vite-env.d.ts — vite-plugin-pwa/client type reference
+    tsconfig.json — references tsconfig.sw.json
+    tsconfig.app.json — excludes src/sw.ts
+    tsconfig.sw.json (NEW)
+    package.json, package-lock.json — workbox-core, workbox-precaching
+      added as devDependencies
+
+  Verification:
+    npm run typecheck / lint / test (33/33) / build all pass — `npm run
+    build` confirmed `dist/sw.js` is generated via `injectManifest` (14
+    precache entries) with the `SKIP_WAITING` message listener and
+    `clientsClaim()` correctly present in the output.
+
+    This item got an unusually thorough live-verification pass, since a
+    service-worker update flow is easy to get subtly wrong and silently
+    ship broken: built the app, served it via `vite preview`, and drove a
+    real two-build Playwright scenario (scratchpad script, not committed):
+    (1) registered Build A's SW against a real page load; (2) reloaded the
+    page once so Build A was an *already-established* controller before
+    Build B ever entered the picture — matching how a real returning
+    visitor's session actually starts. This mattered: an earlier attempt at
+    this same test, without the extra reload, had both builds register
+    within one single page session, and workbox-window's `isUpdate`
+    detection (which the default post-reload trigger depends on) never
+    fired as a result — a real gotcha about testing this flow, not a
+    product bug, but worth remembering for any future session re-verifying
+    this. (3) Rebuilt with a genuine code change (a `console.log` call) —
+    a still-earlier attempt used a source *comment* only, which is stripped
+    during minification and produced a byte-identical bundle that never
+    triggered an update at all; also worth remembering. (4) Called
+    `registration.update()` and confirmed the new SW actually reached the
+    `waiting` state. (5) Confirmed the persistent toast appeared and was
+    *still* visible after 6.5s — past the normal 5s auto-dismiss window,
+    proving `persistent: true` genuinely suppresses the timer (screenshot
+    taken). (6) Clicked Reload and confirmed, via a JS marker set
+    immediately before the click, that a *genuine full-page reload*
+    occurred (marker cleared) rather than an SPA client-side navigation.
+    (7) Confirmed the reloaded page's console actually logged the Build B
+    marker string, proving the new version was really running
+    post-reload, and that the toast was correctly gone on the fresh load
+    (no pending update left to prompt about). No real-device pass — this
+    was chromium via Playwright against a local preview server, consistent
+    with every other Phase 7 item so far; deferred to P7.7.
+
+  Next Step: P7.3 — "What's New" modal.
