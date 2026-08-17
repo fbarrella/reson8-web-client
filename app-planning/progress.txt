@@ -3059,3 +3059,118 @@ Feature/Fix: Phase 7 — P7.3: "What's New" modal
     so far — deferred to P7.7.
 
   Next Step: P7.4 — Badging & Vibration API lifecycle audit.
+
+--- Entry: 17/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.4: Badging & Vibration API lifecycle audit
+
+  Problem: Phase 5 introduced the Badging/Vibration API call sites for
+  Nudge/DM alerts; this phase's job was auditing them for edge cases —
+  specifically the badge never getting "stuck" showing a stale count in
+  either direction — not adding new capability.
+
+  Solution: Audited every call site in `src/services/connectionService.ts`
+  (`src/lib/deviceAlerts.ts`'s `setAppBadge`/`clearAppBadge`/`vibrate`
+  wrappers themselves were already correctly feature-detected and
+  best-effort — no changes needed there) and found three real bugs, not
+  just theoretical ones:
+
+  1. `handleVisibilityChange` unconditionally called `clearAppBadge()` on
+     every tab-focus regain, even when DMs were still genuinely unread — a
+     badge wrongly cleared to zero while real unread state exists is just
+     as broken as a stale nonzero count, in the opposite direction. Fixed
+     to recompute the true remaining DM-unread total on focus and only
+     clear if it's actually zero.
+  2. Nudge's badge contribution was a one-shot `Math.max(dmTotal, 1)`
+     heuristic with no persisted "has this nudge been acknowledged" state,
+     so it could resurface or vanish inconsistently across later badge
+     recomputations. Replaced with an explicit `hasPendingNudgeBadge`
+     module-level flag: set `true` on `NUDGE_RECEIVED`, cleared
+     specifically on the tab regaining focus (the natural "acknowledgment"
+     moment, since the protocol has no per-nudge read receipt the way DMs
+     have `MARK_DMS_READ`) — also reset defensively in `leaveServer()` so
+     a nudge from one connection session can't leak a stale +1 into a
+     later session within the same page load.
+  3. Neither `hydrateUnreadDmPartners()` call site (initial
+     `connectToServer` success, and the post-reconnect rejoin handshake)
+     ever refreshed the OS badge after re-syncing `dmStore` from server
+     truth — a reconnect spanning other unread activity (another device,
+     messages the server already knew about) could leave the icon showing
+     a stale total that no longer matched the app's own freshly-hydrated
+     state. Fixed by chaining `.then(() => pushAppBadgeIfBackgrounded())`
+     onto both.
+
+  New `pushAppBadgeIfBackgrounded()` is the single accurate-recompute
+  helper (sum of unread DMs + the pending-nudge flag, only touches the
+  icon while backgrounded — in-app UI already communicates unread state
+  while focused, preserving Phase 5's original design choice) that every
+  badge-changing call site now goes through instead of ad-hoc
+  `setAppBadge`/`clearAppBadge` calls with locally-reasoned counts.
+
+  Separately, while specifically trying to verify the PRD's own named
+  example scenario ("badge not clearing on logout/disconnect"),
+  discovered `leaveServer()` — which already correctly clears the badge
+  and resets every store — was dead code, never actually called from
+  anywhere in the UI. There was no way for a user to disconnect/log out of
+  a connected server at all (the "Disconnect" keyboard-shortcut slot in
+  Voice & Shortcuts settings is unrelated — it calls `leaveVoiceChannel()`,
+  not `leaveServer()`, matching the desktop client's own voice-only
+  scoping for that shortcut). Confirmed via the desktop client's
+  `renderer.ts` that it has an explicit `btn-disconnect` header button —
+  a real, previously-unported feature gap, not an invented one. Added a
+  minimal "Disconnect" button to Settings -> Application tab (only
+  rendered while `status === "connected"`) that calls the existing,
+  already-correct `leaveServer()` and closes the settings sheet;
+  `RequireConnection`'s existing route guard handles the redirect to
+  `/connect` automatically once `connectionStore` resets.
+
+  Vibration API audit: confirmed the sole call site (Nudge) is correctly
+  feature-detected; found no other reasonable use within this app's actual
+  scope (no "incoming call"-equivalent concept exists here, unlike the
+  PRD's own example) worth adding, per the phase's explicit "not
+  introducing new call sites" instruction.
+
+  Edge Cases Handled:
+    Stale-badge-stuck-nonzero (the PRD's named example) AND the opposite,
+    previously-unnamed case of a badge wrongly wiped to zero while
+    genuinely unread state remains; a reconnect leaving the icon out of
+    sync with freshly-hydrated server truth; a nudge's badge contribution
+    leaking across connection sessions within one page load.
+
+  Key Files Modified:
+    src/services/connectionService.ts — pushAppBadgeIfBackgrounded(),
+      hasPendingNudgeBadge, fixed visibilitychange/hydration call sites
+    src/features/settings/ApplicationTab.tsx — Disconnect button wired to
+      leaveServer()
+
+  Verification:
+    npm run typecheck / lint / build pass. npm run test: 33/33 (one run
+    hit an unrelated Vitest worker-pool startup timeout on
+    ConnectScreen.test.tsx — confirmed as sandbox flakiness by an
+    immediate clean rerun, 5/5 files / 33/33 tests, no code implicated).
+
+    Live Playwright verification with two simultaneous connected clients
+    and a spied-on Badging API (navigator.setAppBadge/clearAppBadge
+    overridden via addInitScript, since real OS-level tab backgrounding
+    can't be simulated headlessly — document.visibilityState itself was
+    overridden with a manual getter + manually-dispatched visibilitychange
+    events, to exercise the real event-handling code path rather than a
+    mocked shortcut): 7/7 assertions passed in one script — DM arrives
+    while backgrounded sets the count correctly across multiple messages
+    from the same partner; focus-regain with DMs still unread correctly
+    does NOT clear the badge; focus-regain after a nudge with nothing else
+    unread correctly clears it; Disconnect clears a genuinely-nonzero
+    badge (verified by first navigating away from the open DM pane so the
+    message actually counted as unread, rather than being implicitly read
+    via the open conversation's activePartnerId match). A second script
+    isolated the reconnect/hydration-resync fix specifically: a message
+    sent while on an entirely different connection generation, verified
+    via a real full-page reload wiping all in-memory JS state between send
+    and reconnect, correctly produces a badge set on the fresh connect
+    with no live DIRECT_MESSAGE_RECEIVED event needed that session (1/1).
+
+    No real-device pass this session, consistent with every other Phase 7
+    item so far — deferred to P7.7.
+
+  Next Step: P7.5 — accessibility gate (axe-core audit across every
+  route/surface).
