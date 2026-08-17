@@ -13,3 +13,16 @@ export function getOrCreateInstanceId(): string {
   localStorage.setItem(INSTANCE_ID_KEY, created);
   return created;
 }
+
+/**
+ * Whether this browser profile has run before, independent of any single
+ * feature's own persisted state — mirrors the desktop client's
+ * `hasExistingInstanceId()` (its ID file is written on first-ever launch,
+ * before anything else touches userData). Must be read before anything in
+ * this session calls `getOrCreateInstanceId()` — main.tsx captures it
+ * before React renders, since that's the earliest point nothing else could
+ * have created the key yet.
+ */
+export function hasExistingInstanceId(): boolean {
+  return localStorage.getItem(INSTANCE_ID_KEY) !== null;
+}

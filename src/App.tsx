@@ -12,9 +12,14 @@ import { DmsListPage } from "@/features/dm/DmsListPage";
 import { DmRoute } from "@/features/dm/DmRoute";
 import { SettingsSheet } from "@/features/settings/SettingsSheet";
 import { InstallPrompt } from "@/features/pwa/InstallPrompt";
+import { WhatsNewModal } from "@/features/pwa/WhatsNewModal";
 import { Toaster } from "@/components/ui/toaster";
 
-export default function App() {
+interface AppProps {
+  hadExistingInstanceId: boolean;
+}
+
+export default function App({ hadExistingInstanceId }: AppProps) {
   return (
     <>
       <Routes>
@@ -39,6 +44,7 @@ export default function App() {
 
       <SettingsSheet />
       <InstallPrompt />
+      <WhatsNewModal hadExistingInstanceId={hadExistingInstanceId} />
       <Toaster />
     </>
   );

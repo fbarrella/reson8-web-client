@@ -2962,3 +2962,100 @@ Feature/Fix: Phase 7 — P7.2: Service worker update flow
     with every other Phase 7 item so far; deferred to P7.7.
 
   Next Step: P7.3 — "What's New" modal.
+
+--- Entry: 17/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.3: "What's New" modal
+
+  Problem: No post-update notification existed. The web client needed the
+  same "show release notes once per version bump, for a returning visitor
+  only" behavior desktop Phase 11 shipped, without inventing a new
+  design from scratch.
+
+  Solution: Read `../reson8/apps/client/src/renderer/renderer.ts` and
+  `instance-id.ts` directly to confirm the actual shipped logic (not just
+  the PRD's paraphrase) before porting. New `src/lib/whatsNew.ts`:
+  `checkForWhatsNew(currentVersion, wasReturningVisitor)` compares the
+  running build's `__APP_VERSION__` against
+  `localStorage['reson8-last-seen-version']` — unset **and** no prior
+  instance-id history means a truly first-ever load (silently records the
+  version, shows nothing); unset but a returning visitor (upgrading from a
+  pre-P7.3 build, or partially cleared localStorage) falls through to show
+  notes same as any other version bump; matches is a no-op. Ported exactly
+  from desktop's `checkForWhatsNew`.
+
+  `fetchReleaseNotes()` hits GitHub's Releases API (confirmed CORS-open,
+  same as desktop — `api.github.com/repos/fbarrella/reson8-web-client/
+  releases/tags/v{version}`), 5s `AbortController` timeout, and returns
+  `null` on any failure (offline, rate-limited, no release published yet
+  for that tag) so the caller retries next launch instead of marking the
+  version "seen" and silently losing the notification — same contract as
+  desktop. Dropped desktop's explicit `User-Agent` header — browsers treat
+  that as a forbidden fetch header and either ignore or warn on it, unlike
+  Node's `fetch` in the Electron main process.
+
+  Added `hasExistingInstanceId()` to `src/lib/instanceId.ts` (mirrors the
+  desktop function's name and purpose exactly) and capture it in
+  `main.tsx` **before React ever renders**, threaded down as an `App` prop
+  to the new `WhatsNewModal`. The timing matters: `ConnectScreen`'s
+  `onSubmit` is the first thing in this app that would otherwise create
+  the `reson8-instance-id` key this session, and that must not happen
+  before the "was this a returning visitor" check runs, or a truly
+  first-ever visitor who submits the connect form quickly enough would get
+  misclassified as returning.
+
+  New `src/features/pwa/WhatsNewModal.tsx` renders the release body via
+  plain JSX interpolation (React's default escaping — never
+  `dangerouslySetInnerHTML`, master PRD §5.6, same discipline as the
+  desktop client's own `textContent`-not-`innerHTML` choice for this exact
+  surface). "View on GitHub" opens the release URL without dismissing;
+  "Got it" calls `markWhatsNewSeen()` and closes — both ported from
+  desktop. Backdrop-click and Escape both dismiss **without** marking as
+  seen (ported: an accidental dismissal shouldn't permanently suppress the
+  notification) — Escape support is an app-wide consistency addition
+  beyond the literal desktop port, since every other modal in this
+  codebase (SettingsSheet, the mobile voice-panel sheet) already supports
+  it. Wired `<WhatsNewModal hadExistingInstanceId={...} />` into `App.tsx`
+  alongside the existing `SettingsSheet`/`InstallPrompt`/`Toaster` mounts.
+
+  localStorage Keys: reson8-last-seen-version (whatsNew.ts) — the key was
+  already named in Phase 1's key-naming convention list; this item is what
+  actually reads/writes it for the first time.
+
+  Key Files Modified:
+    src/lib/instanceId.ts — hasExistingInstanceId() added
+    src/lib/whatsNew.ts (NEW)
+    src/features/pwa/WhatsNewModal.tsx (NEW)
+    src/main.tsx — captures hasExistingInstanceId() pre-render, passes to App
+    src/App.tsx — App now takes hadExistingInstanceId prop, mounts
+      <WhatsNewModal>
+
+  Verification:
+    npm run typecheck / lint / test (33/33) / build all pass. Live
+    Playwright pass against the built app (`vite preview`) with the GitHub
+    Releases API intercepted via `page.route` (not real network — avoids
+    depending on whether this repo has actually published a GitHub
+    Release yet, and keeps the scenarios deterministic):
+      1. Truly-first-ever load: no modal, release API never called,
+         `reson8-last-seen-version` silently set to 6.0.0,
+         `reson8-instance-id` stayed unset.
+      2. Returning visitor + version bump + notes available: modal
+         appeared with the exact multi-line body text preserved
+         (`whitespace-pre-wrap`); a deliberately injected
+         `<script>alert(1)</script>` string in the release body rendered
+         as literal visible text with zero extra `<script>` elements
+         added to the DOM — confirms the no-`dangerouslySetInnerHTML`
+         contract holds against an actual XSS-shaped payload, not just by
+         code review. "Got it" closed it and set the last-seen marker
+         (screenshotted).
+      3. Version matches last-seen: no-op, release API never called.
+      4. Returning visitor + version bump + no release published yet
+         (mocked 404): no modal, `reson8-last-seen-version` deliberately
+         left unchanged so it retries next launch.
+      5. Separate pass confirmed Escape-dismiss does NOT mark the version
+         seen — the modal correctly reappeared on a subsequent reload.
+    No real-device pass this session (chromium via Playwright against a
+    local preview server only), consistent with every other Phase 7 item
+    so far — deferred to P7.7.
+
+  Next Step: P7.4 — Badging & Vibration API lifecycle audit.
