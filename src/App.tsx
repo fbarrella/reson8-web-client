@@ -11,6 +11,7 @@ import { ChatTabPage } from "@/features/chat/ChatTabPage";
 import { DmsListPage } from "@/features/dm/DmsListPage";
 import { DmRoute } from "@/features/dm/DmRoute";
 import { SettingsSheet } from "@/features/settings/SettingsSheet";
+import { InstallPrompt } from "@/features/pwa/InstallPrompt";
 import { Toaster } from "@/components/ui/toaster";
 
 export default function App() {
@@ -37,6 +38,7 @@ export default function App() {
       </Routes>
 
       <SettingsSheet />
+      <InstallPrompt />
       <Toaster />
     </>
   );

@@ -2748,3 +2748,101 @@ Feature/Fix: Phase 6 acceptance criteria verification
   kick/ban, server settings).
 
 === Version bumped to 6.0.0 (16/08/2026) — classification: MAJOR ===
+
+--- Entry: 17/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.1: Manifest & installability
+
+  Problem: Phase 1's manifest icons were all the same 512x512 source image
+  relabeled at three declared sizes (no image-resize tooling was available
+  in the sandbox at the time — flagged as a known gap in P1.13's entry).
+  No install-prompt UX existed at all: Chromium's `beforeinstallprompt`
+  went uncaptured (so its own unsolicited native banner would fire
+  whenever it wanted), and iOS Safari — which never fires that event —
+  had no substitute affordance, despite having no other way for a user to
+  discover PWA installability there.
+
+  Solution: Installed `sharp` this session (`npm install --no-save
+  --maxsockets 1 sharp`, per the project's established npm-on-this-sandbox
+  workarounds — succeeded in ~23s, no tracked files changed since
+  `--no-save` was used) and generated real, distinct-content icons from
+  `../reson8/logo_512x512.png`: icon-192.png (192x192, transparent,
+  contain-fit), icon-512.png (512x512, re-encoded cleanly), and
+  icon-maskable-512.png (512x512, logo scaled to a 72% safe zone centered
+  on a solid `#0f1115` background matching the theme tokens, so OS
+  icon-shape masking doesn't clip the logo). Also generated a new
+  apple-touch-icon.png (180x180, opaque background) — iOS ignores manifest
+  icons entirely for home-screen use and requires its own `<link
+  rel="apple-touch-icon">`, which index.html now has, alongside
+  `apple-mobile-web-app-capable`, `apple-mobile-web-app-status-bar-style`,
+  and `apple-mobile-web-app-title` meta tags.
+
+  Install-prompt UX, new files:
+  - `src/lib/platform.ts` — `isIOS()`/`isIOSSafari()` (UA-sniffed, since
+    Chrome/Firefox/Edge on iOS also include "Safari" in their UA and must
+    be excluded) and `isStandaloneDisplayMode()` (matchMedia
+    display-mode + the legacy `navigator.standalone` iOS flag).
+  - `src/stores/installPromptStore.ts` — holds the captured
+    `beforeinstallprompt` event, an `installed` flag (set on the
+    `appinstalled` event), and a `dismissed` flag persisted to
+    `localStorage['reson8-install-prompt-dismissed']` so a dismissal
+    doesn't reappear every session.
+  - `src/services/installPromptService.ts` —
+    `initInstallPromptListeners()` calls `preventDefault()` on
+    `beforeinstallprompt` (suppressing Chromium's own native banner
+    permanently for that captured event) and stores it; `promptInstall()`
+    replays it and resolves the user's choice.
+  - `src/features/pwa/InstallPrompt.tsx` — a dismissible card shown 3s
+    after `connectionStore.status` becomes `"connected"` (a working
+    session is a better install-conversion moment than the connect
+    screen, per the PRD). Chromium branch: "Install" button wired to
+    `promptInstall()`. iOS Safari branch (detected via `isIOSSafari()` +
+    not already standalone): an instructional "Tap Share then Add to Home
+    Screen" panel, since no native prompt exists to trigger there.
+
+  Wired `initInstallPromptListeners()` into `main.tsx` (alongside the
+  existing `soundAlert.init()`/`attachVoiceShortcutListeners()` one-time
+  init calls) and `<InstallPrompt />` into `App.tsx` next to the existing
+  `<SettingsSheet />`/`<Toaster />` root-level mounts.
+
+  Platform-Specific Notes:
+    The synthetic-event verification below is a stand-in for a real
+    device — Chromium's actual `beforeinstallprompt` firing criteria
+    (engagement heuristics, HTTPS, valid manifest) can't be reproduced in
+    headless automation. Real-device confirmation on both Android Chrome
+    and iOS Safari is still owed before this item can be treated as fully
+    launch-verified — deferred to P7.7's device-matrix pass, consistent
+    with how this project has always sequenced that work.
+
+  localStorage Keys: reson8-install-prompt-dismissed (installPromptStore)
+
+  Key Files Modified:
+    index.html — apple-touch-icon link + iOS meta tags
+    public/icons/icon-192.png, icon-512.png, icon-maskable-512.png
+      (regenerated, real distinct content)
+    public/icons/apple-touch-icon.png (NEW)
+    src/lib/platform.ts (NEW)
+    src/stores/installPromptStore.ts (NEW)
+    src/services/installPromptService.ts (NEW)
+    src/features/pwa/InstallPrompt.tsx (NEW)
+    src/main.tsx — initInstallPromptListeners() call
+    src/App.tsx — <InstallPrompt /> mount
+
+  Verification:
+    npm run typecheck / lint / build all pass. `npm run build` output
+    confirmed the manifest references all three regenerated icons and
+    `dist/icons/` contains four distinct, correctly-sized PNGs (verified
+    via `sharp` metadata, not just file presence). Live Playwright pass
+    against a built-and-`vite preview`d app connected to the reused
+    scratchpad mock server (never committed, same one used throughout
+    Phases 1-6): (1) an iOS-Safari user-agent context showed the
+    instructional panel with zero console/page errors, screenshotted at
+    390px; (2) a synthetic `beforeinstallprompt` dispatch (real event
+    can't be triggered in headless automation) confirmed the Chromium
+    "Install" button renders, calls `prompt()`, and the banner correctly
+    disappears after being consumed — screenshotted at 1280px desktop
+    three-pane layout. No real-device pass performed this session (see
+    Platform-Specific Notes above).
+
+  Next Step: P7.2 — service worker update flow (switch vite-plugin-pwa
+  from generateSW to injectManifest mode).
