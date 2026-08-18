@@ -4075,3 +4075,36 @@ Feature/Fix: Phase 7 — P7.9: Project documentation (README.md/CLAUDE.md)
   P7.7 device matrix's Android tablet/iPad (P2) row — revisit
   `/bump-version` for the phase's MAJOR bump once that's closed, or
   explicitly decided as an accepted, permanently-open gap.
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.7: real-device results, Android tablet + iPad
+(closes the last open matrix row)
+
+  Problem: Every row in the P7.7 device matrix had real-device
+  confirmation except the P2 Android-tablet/iPad row — the last item
+  blocking Phase 7's acceptance criteria from being fully met.
+
+  Solution: User confirmed a real-device pass on both an Android tablet
+  and an iPad, both passing — specifically validating the `md:` two-pane
+  breakpoint composition (collapsible channel drawer + content pane) this
+  row exists to check, per `app-planning/P7.7-real-device-checklist.md`'s
+  own stated purpose for it. This closes the full P7.7 device matrix: every
+  P0/P1/P2 row now has real-hardware confirmation, not just emulation.
+
+  With this, every acceptance criterion in the Phase 7 PRD's closing
+  section is met: installability verified on real Android Chrome/iOS
+  Safari, the update-flow + What's New modal built and verified (P7.2/
+  P7.3), zero axe-core violations (P7.5), Lighthouse targets met (P7.6),
+  the full real-device matrix exercised end-to-end (P7.7, now complete),
+  and HTTPS/WSS/CSP documented (P7.8). Phase 7 is complete.
+
+  Verification:
+    User-reported, real hardware — same reporting granularity as the
+    earlier P0/P1 real-device entry (pass/fail per platform, not an
+    itemized per-checkbox transcript).
+
+  Next Step: Phase 7 complete. `/bump-version` for the MAJOR bump (new
+  capabilities shipped throughout: installability, service-worker update
+  flow, "What's New" modal, Badging/Vibration lifecycle) — see the
+  version-bump marker immediately following this entry.

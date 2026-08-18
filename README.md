@@ -4,7 +4,7 @@
 
 A mobile-first, fully responsive Progressive Web App client for [Reson8](../reson8) — a self-hosted voice & text communication server (TeamSpeak-3-style: hierarchical channel tree, SFU voice via mediasoup, persistent text chat, DMs, moderation). Built with React, TypeScript, and Vite. This is an independent client for the existing `reson8` server; it does not modify the server, its database, or its Socket.io protocol.
 
-**Status:** Phase 7 (PWA platform polish & launch hardening) is essentially complete — installability, service-worker update flow, "What's New" modal, a zero-violations accessibility audit, a Lighthouse-verified performance budget, real-device cross-browser testing, and deployment documentation are all done. See [`app-planning/progress.txt`](app-planning/progress.txt) for the full build log, including the one open item (the P7.7 device matrix's Android tablet/iPad row hasn't been tested on real hardware yet).
+**Status:** All seven phases are complete — this is a launch-ready client. Phase 7 (PWA platform polish & launch hardening) shipped installability, a service-worker update flow, a "What's New" modal, a zero-violations accessibility audit, a Lighthouse-verified performance budget, a full real-device cross-browser/cross-device testing pass (phone, tablet, and desktop across Chrome, Safari, and Firefox), and deployment documentation. See [`app-planning/progress.txt`](app-planning/progress.txt) for the full build log.
 
 ## Quick start
 
