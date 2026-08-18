@@ -3767,3 +3767,5 @@ Voice tab route
   Next Step: Resume Phase 7 at P7.7 — Cross-device/cross-browser testing
   matrix (a real-device pass against these three fixes specifically, not
   just the general matrix, would be the most valuable place to start).
+
+=== Version bumped to 6.1.0 (18/08/2026) — classification: MINOR ===
