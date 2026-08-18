@@ -4009,3 +4009,69 @@ CSP configuration)
   Next Step: P7.9 — Project documentation (README.md/CLAUDE.md rewrite for
   future contributors, now genuinely due — README.md's "Status: Phase 1
   complete" line has been stale since roughly Phase 2).
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.9: Project documentation (README.md/CLAUDE.md)
+
+  Problem: The phase PRD's explicit checklist for this item — setup/dev
+  commands, architecture summary, the vendored-protocol-types sync
+  process, a pointer back to `app-planning/` as the authoritative spec —
+  was already almost entirely satisfied by `CLAUDE.md`, which was written
+  self-sufficient from Phase 1 onward. What was actually stale: its
+  "Current status: Phase 1 in progress" line had never been updated across
+  six subsequent phases, its wire-protocol section still described the
+  vendored types as a Phase 1 future-tense TODO ("until Phase 1 vendors
+  the real type files") despite that having shipped six phases ago, and
+  its progress.txt description still said "the file currently just holds
+  the format header" when that file has since grown into this project's
+  primary build record. `README.md` was worse off — a single "Status:
+  Phase 1 complete (foundation...)" line, no deployment section (P7.8 had
+  just added one), and dev-command coverage missing `format` and
+  `check:bundle-size` (both added since the README was last touched).
+
+  Solution: Targeted staleness fixes to `CLAUDE.md` rather than a full
+  rewrite — it didn't need one, it needed to stop contradicting its own
+  content. Updated the status line to accurately reflect Phase 7's actual
+  state (P7.1–P7.8 done, P7.9 wrapping up, explicitly flagging the P7.7
+  tablet-row gap so nobody assumes full device-matrix coverage from a
+  stale summary), corrected the wire-protocol section's tense now that
+  the vendored types genuinely are the shipped source of truth, fixed the
+  progress.txt description, added `scripts/`, the `pwa` feature directory,
+  and the root-level `Dockerfile`/`nginx.conf` to the architecture tree,
+  and added a one-line pointer to `DEPLOYMENT.md`.
+
+  `README.md` got a fuller pass, since it actually needed one: a status
+  paragraph naming what Phase 7 shipped (not just "complete"/"in
+  progress"), a "Quick start" section ahead of the full dev-commands list
+  (the two were previously merged, which buried the actual "how do I run
+  this" answer), the full current command list, a Deployment section
+  pointing at `DEPLOYMENT.md`, and an explicit closing note that
+  `app-planning/progress.txt` is the authoritative record and any status
+  summary (this README's included) can lag behind it — the same lesson
+  this exact entry is a response to.
+
+  Deliberately did not add: a LICENSE section (neither this repo nor
+  `../reson8` has established one — not this phase item's call to invent),
+  or duplicating `CLAUDE.md`'s architecture tree/wire-protocol tables
+  verbatim into the README (kept the two documents' roles distinct —
+  README as the human quick-start/status front door, CLAUDE.md as the
+  deep technical reference — rather than letting the same content drift
+  out of sync in two places).
+
+  Key Files Modified:
+    CLAUDE.md — status line, wire-protocol section tense, progress.txt
+      description, architecture tree, DEPLOYMENT.md pointer
+    README.md — full rewrite (status, quick start, dev commands,
+      deployment section, planning-docs section)
+
+  Verification:
+    npm run typecheck / lint pass (documentation-only change; full
+    test/build suite not re-run since nothing under src/ changed — the
+    P7.8 entry immediately prior already confirmed test/build/bundle-size
+    all green against the current source tree).
+
+  Next Step: Phase 7's own acceptance criteria are all met except the
+  P7.7 device matrix's Android tablet/iPad (P2) row — revisit
+  `/bump-version` for the phase's MAJOR bump once that's closed, or
+  explicitly decided as an accepted, permanently-open gap.
