@@ -53,7 +53,13 @@ export function ChannelActionsMenu({
 
   return (
     <>
-      <DropdownMenu open={open} onOpenChange={onOpenChange}>
+      {/* modal=false: this is a small kebab menu, not a page-blocking dialog —
+          Radix's default modal behavior aria-hides the rest of the app
+          (including the only <main>/<h1>) while it's open, which is both
+          unnecessary here and a real axe violation (aria-hidden-focus,
+          landmark-one-main, page-has-heading-one) since the hidden siblings
+          stay focusable. */}
+      <DropdownMenu open={open} onOpenChange={onOpenChange} modal={false}>
         <DropdownMenuTrigger asChild>
           <button
             type="button"

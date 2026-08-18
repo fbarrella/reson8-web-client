@@ -98,7 +98,7 @@ export function ConnectScreen() {
               {...register("serverUrl")}
             />
             {errors.serverUrl && (
-              <p className="text-sm text-destructive">{errors.serverUrl.message}</p>
+              <p className="text-sm text-destructive-text">{errors.serverUrl.message}</p>
             )}
           </div>
 
@@ -112,7 +112,7 @@ export function ConnectScreen() {
               {...register("nickname")}
             />
             {errors.nickname && (
-              <p className="text-sm text-destructive">{errors.nickname.message}</p>
+              <p className="text-sm text-destructive-text">{errors.nickname.message}</p>
             )}
           </div>
 
@@ -143,7 +143,7 @@ export function ConnectScreen() {
           </label>
 
           {error && (
-            <p role="alert" className="rounded-md bg-destructive/15 p-3 text-sm text-destructive">
+            <p role="alert" className="rounded-md bg-destructive/15 p-3 text-sm text-destructive-text">
               {error}
             </p>
           )}

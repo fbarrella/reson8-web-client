@@ -1,8 +1,17 @@
-import { useState, type ReactNode } from "react";
+import { Suspense, lazy, useState, type ReactNode } from "react";
 
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
-import { EmojiPickerContent } from "@/features/emoji/EmojiPickerContent";
-import { CustomEmojiUploadDialog } from "@/features/emoji/CustomEmojiUploadDialog";
+
+// P7.6: defers the ~552-entry emoji dataset and the crop-tooling dialog out
+// of the initial bundle — neither is needed until the picker is actually
+// opened (or, for the upload dialog, until the picker's own "upload custom
+// emoji" affordance is used).
+const EmojiPickerContent = lazy(() =>
+  import("@/features/emoji/EmojiPickerContent").then((m) => ({ default: m.EmojiPickerContent })),
+);
+const CustomEmojiUploadDialog = lazy(() =>
+  import("@/features/emoji/CustomEmojiUploadDialog").then((m) => ({ default: m.CustomEmojiUploadDialog })),
+);
 
 /**
  * Shared trigger+popover wrapper around EmojiPickerContent — used both for
@@ -27,24 +36,37 @@ export function EmojiPicker({
     <>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-        <PopoverContent align={align} className="w-auto p-0" onClick={(e) => e.stopPropagation()}>
-          <EmojiPickerContent
-            onSelectEmoji={(emoji) => {
-              onPick(emoji);
-              setOpen(false);
-            }}
-            onSelectCustomEmoji={(name) => {
-              onPick(`:${name}:`);
-              setOpen(false);
-            }}
-            onRequestUpload={() => {
-              setOpen(false);
-              setUploadOpen(true);
-            }}
-          />
+        <PopoverContent
+          align={align}
+          className="w-auto p-0"
+          aria-label="Emoji picker"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {open && (
+            <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Loading…</div>}>
+              <EmojiPickerContent
+                onSelectEmoji={(emoji) => {
+                  onPick(emoji);
+                  setOpen(false);
+                }}
+                onSelectCustomEmoji={(name) => {
+                  onPick(`:${name}:`);
+                  setOpen(false);
+                }}
+                onRequestUpload={() => {
+                  setOpen(false);
+                  setUploadOpen(true);
+                }}
+              />
+            </Suspense>
+          )}
         </PopoverContent>
       </Popover>
-      <CustomEmojiUploadDialog open={uploadOpen} onOpenChange={setUploadOpen} />
+      {uploadOpen && (
+        <Suspense fallback={null}>
+          <CustomEmojiUploadDialog open={uploadOpen} onOpenChange={setUploadOpen} />
+        </Suspense>
+      )}
     </>
   );
 }

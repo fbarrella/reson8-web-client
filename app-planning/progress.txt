@@ -2748,3 +2748,1365 @@ Feature/Fix: Phase 6 acceptance criteria verification
   kick/ban, server settings).
 
 === Version bumped to 6.0.0 (16/08/2026) — classification: MAJOR ===
+
+--- Entry: 17/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.1: Manifest & installability
+
+  Problem: Phase 1's manifest icons were all the same 512x512 source image
+  relabeled at three declared sizes (no image-resize tooling was available
+  in the sandbox at the time — flagged as a known gap in P1.13's entry).
+  No install-prompt UX existed at all: Chromium's `beforeinstallprompt`
+  went uncaptured (so its own unsolicited native banner would fire
+  whenever it wanted), and iOS Safari — which never fires that event —
+  had no substitute affordance, despite having no other way for a user to
+  discover PWA installability there.
+
+  Solution: Installed `sharp` this session (`npm install --no-save
+  --maxsockets 1 sharp`, per the project's established npm-on-this-sandbox
+  workarounds — succeeded in ~23s, no tracked files changed since
+  `--no-save` was used) and generated real, distinct-content icons from
+  `../reson8/logo_512x512.png`: icon-192.png (192x192, transparent,
+  contain-fit), icon-512.png (512x512, re-encoded cleanly), and
+  icon-maskable-512.png (512x512, logo scaled to a 72% safe zone centered
+  on a solid `#0f1115` background matching the theme tokens, so OS
+  icon-shape masking doesn't clip the logo). Also generated a new
+  apple-touch-icon.png (180x180, opaque background) — iOS ignores manifest
+  icons entirely for home-screen use and requires its own `<link
+  rel="apple-touch-icon">`, which index.html now has, alongside
+  `apple-mobile-web-app-capable`, `apple-mobile-web-app-status-bar-style`,
+  and `apple-mobile-web-app-title` meta tags.
+
+  Install-prompt UX, new files:
+  - `src/lib/platform.ts` — `isIOS()`/`isIOSSafari()` (UA-sniffed, since
+    Chrome/Firefox/Edge on iOS also include "Safari" in their UA and must
+    be excluded) and `isStandaloneDisplayMode()` (matchMedia
+    display-mode + the legacy `navigator.standalone` iOS flag).
+  - `src/stores/installPromptStore.ts` — holds the captured
+    `beforeinstallprompt` event, an `installed` flag (set on the
+    `appinstalled` event), and a `dismissed` flag persisted to
+    `localStorage['reson8-install-prompt-dismissed']` so a dismissal
+    doesn't reappear every session.
+  - `src/services/installPromptService.ts` —
+    `initInstallPromptListeners()` calls `preventDefault()` on
+    `beforeinstallprompt` (suppressing Chromium's own native banner
+    permanently for that captured event) and stores it; `promptInstall()`
+    replays it and resolves the user's choice.
+  - `src/features/pwa/InstallPrompt.tsx` — a dismissible card shown 3s
+    after `connectionStore.status` becomes `"connected"` (a working
+    session is a better install-conversion moment than the connect
+    screen, per the PRD). Chromium branch: "Install" button wired to
+    `promptInstall()`. iOS Safari branch (detected via `isIOSSafari()` +
+    not already standalone): an instructional "Tap Share then Add to Home
+    Screen" panel, since no native prompt exists to trigger there.
+
+  Wired `initInstallPromptListeners()` into `main.tsx` (alongside the
+  existing `soundAlert.init()`/`attachVoiceShortcutListeners()` one-time
+  init calls) and `<InstallPrompt />` into `App.tsx` next to the existing
+  `<SettingsSheet />`/`<Toaster />` root-level mounts.
+
+  Platform-Specific Notes:
+    The synthetic-event verification below is a stand-in for a real
+    device — Chromium's actual `beforeinstallprompt` firing criteria
+    (engagement heuristics, HTTPS, valid manifest) can't be reproduced in
+    headless automation. Real-device confirmation on both Android Chrome
+    and iOS Safari is still owed before this item can be treated as fully
+    launch-verified — deferred to P7.7's device-matrix pass, consistent
+    with how this project has always sequenced that work.
+
+  localStorage Keys: reson8-install-prompt-dismissed (installPromptStore)
+
+  Key Files Modified:
+    index.html — apple-touch-icon link + iOS meta tags
+    public/icons/icon-192.png, icon-512.png, icon-maskable-512.png
+      (regenerated, real distinct content)
+    public/icons/apple-touch-icon.png (NEW)
+    src/lib/platform.ts (NEW)
+    src/stores/installPromptStore.ts (NEW)
+    src/services/installPromptService.ts (NEW)
+    src/features/pwa/InstallPrompt.tsx (NEW)
+    src/main.tsx — initInstallPromptListeners() call
+    src/App.tsx — <InstallPrompt /> mount
+
+  Verification:
+    npm run typecheck / lint / build all pass. `npm run build` output
+    confirmed the manifest references all three regenerated icons and
+    `dist/icons/` contains four distinct, correctly-sized PNGs (verified
+    via `sharp` metadata, not just file presence). Live Playwright pass
+    against a built-and-`vite preview`d app connected to the reused
+    scratchpad mock server (never committed, same one used throughout
+    Phases 1-6): (1) an iOS-Safari user-agent context showed the
+    instructional panel with zero console/page errors, screenshotted at
+    390px; (2) a synthetic `beforeinstallprompt` dispatch (real event
+    can't be triggered in headless automation) confirmed the Chromium
+    "Install" button renders, calls `prompt()`, and the banner correctly
+    disappears after being consumed — screenshotted at 1280px desktop
+    three-pane layout. No real-device pass performed this session (see
+    Platform-Specific Notes above).
+
+  Next Step: P7.2 — service worker update flow (switch vite-plugin-pwa
+  from generateSW to injectManifest mode).
+
+--- Entry: 17/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.2: Service worker update flow
+
+  Problem: Phase 1's `generateSW` baseline auto-generates a stock service
+  worker with no room for custom lifecycle logic. Reson8 needs a controlled
+  update UX instead: silently auto-updating could yank the SW out from
+  under an active voice/chat session, but silently doing nothing (the
+  default for most Workbox setups) means users never get fixes without a
+  manual hard-refresh — the direct conceptual replacement for
+  electron-updater's check/download/install flow.
+
+  Solution: Switched `vite-plugin-pwa` to `injectManifest` mode
+  (`strategies: "injectManifest"`, `srcDir: "src"`, `filename: "sw.ts"` in
+  `vite.config.ts`), which bundles a hand-written service worker instead of
+  generating one. New `src/sw.ts`: `precacheAndRoute(self.__WB_MANIFEST)` +
+  `cleanupOutdatedCaches()` from `workbox-precaching` (same app-shell-only
+  precaching Phase 1 already had — master PRD §5.4, no runtime/offline-data
+  caching), a `message` listener that calls `self.skipWaiting()` only on an
+  explicit `{type: "SKIP_WAITING"}` postMessage (never automatically on
+  install), and `clientsClaim()` on `activate`. Installed `workbox-core`
+  and `workbox-precaching` as real devDependencies (`^7.4.1`, matching
+  `vite-plugin-pwa`'s bundled `workbox-build` version) rather than leaving
+  them as phantom transitive deps, since `sw.ts` imports from them
+  directly. Added `tsconfig.sw.json` (lib: `ES2023` + `WebWorker`, no DOM)
+  referenced from `tsconfig.json` and excluded from `tsconfig.app.json`'s
+  `include` — the service worker global scope conflicts with the app's
+  DOM-lib tsconfig, same pattern as the existing `tsconfig.node.json` split
+  for `vite.config.ts`.
+
+  Extended the generic toast system (Phase 1 P1.12) with two capabilities
+  every future phase can reuse: a `persistent` flag on `toast()`
+  (`src/stores/toastStore.ts`) that skips the 5s auto-dismiss timer, and an
+  `action: {label, onClick}` for an inline button (`src/components/ui/
+  toaster.tsx`) — the update prompt must never auto-dismiss (would
+  silently drop an available update) and needs a Reload action, not just a
+  passive message.
+
+  New `src/services/swUpdateService.ts` calls `virtual:pwa-register`'s
+  `registerSW({onNeedRefresh, onRegisterError})`; when a new SW reaches the
+  `waiting` state, shows the persistent toast ("A new version is available"
+  / "Reload to update Reson8." / Reload button) wired to the `updateSW()`
+  function `registerSW()` returns, which sends the `SKIP_WAITING` message
+  via workbox-window — `registerSW`'s own default behavior then reloads the
+  page once the new SW actually takes control (`onNeedReload` left
+  unset), satisfying "Reload triggers skipWaiting() + clients.claim() + a
+  page reload" without this app needing to drive that sequence by hand.
+  Wired `initServiceWorkerUpdateFlow()` into `main.tsx` alongside the
+  existing one-time init calls. Added `/// <reference types="vite-plugin-
+  pwa/client" />` to `src/vite-env.d.ts` so `virtual:pwa-register` resolves.
+
+  Lint fix along the way: `sw.ts`'s message listener accessed
+  `event.data.type` where `event.data` is typed `any` per the DOM/WebWorker
+  `MessageEvent` spec, tripping `@typescript-eslint/no-unsafe-member-
+  access`. Replaced with an explicit `isSkipWaitingMessage(data: unknown)`
+  type guard.
+
+  PWA/Service Worker Changes:
+    Precache manifest generation, cache versioning/cleanup, and the
+    installability manifest itself are unchanged from Phase 1/P7.1 — only
+    the *strategy* (generated vs. hand-written SW) and the update-signaling
+    logic are new this item.
+
+  Key Files Modified:
+    vite.config.ts — strategies/srcDir/filename/injectManifest options
+    src/sw.ts (NEW)
+    src/services/swUpdateService.ts (NEW)
+    src/stores/toastStore.ts — persistent + action support
+    src/components/ui/toaster.tsx — renders the action button
+    src/main.tsx — initServiceWorkerUpdateFlow() call
+    src/vite-env.d.ts — vite-plugin-pwa/client type reference
+    tsconfig.json — references tsconfig.sw.json
+    tsconfig.app.json — excludes src/sw.ts
+    tsconfig.sw.json (NEW)
+    package.json, package-lock.json — workbox-core, workbox-precaching
+      added as devDependencies
+
+  Verification:
+    npm run typecheck / lint / test (33/33) / build all pass — `npm run
+    build` confirmed `dist/sw.js` is generated via `injectManifest` (14
+    precache entries) with the `SKIP_WAITING` message listener and
+    `clientsClaim()` correctly present in the output.
+
+    This item got an unusually thorough live-verification pass, since a
+    service-worker update flow is easy to get subtly wrong and silently
+    ship broken: built the app, served it via `vite preview`, and drove a
+    real two-build Playwright scenario (scratchpad script, not committed):
+    (1) registered Build A's SW against a real page load; (2) reloaded the
+    page once so Build A was an *already-established* controller before
+    Build B ever entered the picture — matching how a real returning
+    visitor's session actually starts. This mattered: an earlier attempt at
+    this same test, without the extra reload, had both builds register
+    within one single page session, and workbox-window's `isUpdate`
+    detection (which the default post-reload trigger depends on) never
+    fired as a result — a real gotcha about testing this flow, not a
+    product bug, but worth remembering for any future session re-verifying
+    this. (3) Rebuilt with a genuine code change (a `console.log` call) —
+    a still-earlier attempt used a source *comment* only, which is stripped
+    during minification and produced a byte-identical bundle that never
+    triggered an update at all; also worth remembering. (4) Called
+    `registration.update()` and confirmed the new SW actually reached the
+    `waiting` state. (5) Confirmed the persistent toast appeared and was
+    *still* visible after 6.5s — past the normal 5s auto-dismiss window,
+    proving `persistent: true` genuinely suppresses the timer (screenshot
+    taken). (6) Clicked Reload and confirmed, via a JS marker set
+    immediately before the click, that a *genuine full-page reload*
+    occurred (marker cleared) rather than an SPA client-side navigation.
+    (7) Confirmed the reloaded page's console actually logged the Build B
+    marker string, proving the new version was really running
+    post-reload, and that the toast was correctly gone on the fresh load
+    (no pending update left to prompt about). No real-device pass — this
+    was chromium via Playwright against a local preview server, consistent
+    with every other Phase 7 item so far; deferred to P7.7.
+
+  Next Step: P7.3 — "What's New" modal.
+
+--- Entry: 17/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.3: "What's New" modal
+
+  Problem: No post-update notification existed. The web client needed the
+  same "show release notes once per version bump, for a returning visitor
+  only" behavior desktop Phase 11 shipped, without inventing a new
+  design from scratch.
+
+  Solution: Read `../reson8/apps/client/src/renderer/renderer.ts` and
+  `instance-id.ts` directly to confirm the actual shipped logic (not just
+  the PRD's paraphrase) before porting. New `src/lib/whatsNew.ts`:
+  `checkForWhatsNew(currentVersion, wasReturningVisitor)` compares the
+  running build's `__APP_VERSION__` against
+  `localStorage['reson8-last-seen-version']` — unset **and** no prior
+  instance-id history means a truly first-ever load (silently records the
+  version, shows nothing); unset but a returning visitor (upgrading from a
+  pre-P7.3 build, or partially cleared localStorage) falls through to show
+  notes same as any other version bump; matches is a no-op. Ported exactly
+  from desktop's `checkForWhatsNew`.
+
+  `fetchReleaseNotes()` hits GitHub's Releases API (confirmed CORS-open,
+  same as desktop — `api.github.com/repos/fbarrella/reson8-web-client/
+  releases/tags/v{version}`), 5s `AbortController` timeout, and returns
+  `null` on any failure (offline, rate-limited, no release published yet
+  for that tag) so the caller retries next launch instead of marking the
+  version "seen" and silently losing the notification — same contract as
+  desktop. Dropped desktop's explicit `User-Agent` header — browsers treat
+  that as a forbidden fetch header and either ignore or warn on it, unlike
+  Node's `fetch` in the Electron main process.
+
+  Added `hasExistingInstanceId()` to `src/lib/instanceId.ts` (mirrors the
+  desktop function's name and purpose exactly) and capture it in
+  `main.tsx` **before React ever renders**, threaded down as an `App` prop
+  to the new `WhatsNewModal`. The timing matters: `ConnectScreen`'s
+  `onSubmit` is the first thing in this app that would otherwise create
+  the `reson8-instance-id` key this session, and that must not happen
+  before the "was this a returning visitor" check runs, or a truly
+  first-ever visitor who submits the connect form quickly enough would get
+  misclassified as returning.
+
+  New `src/features/pwa/WhatsNewModal.tsx` renders the release body via
+  plain JSX interpolation (React's default escaping — never
+  `dangerouslySetInnerHTML`, master PRD §5.6, same discipline as the
+  desktop client's own `textContent`-not-`innerHTML` choice for this exact
+  surface). "View on GitHub" opens the release URL without dismissing;
+  "Got it" calls `markWhatsNewSeen()` and closes — both ported from
+  desktop. Backdrop-click and Escape both dismiss **without** marking as
+  seen (ported: an accidental dismissal shouldn't permanently suppress the
+  notification) — Escape support is an app-wide consistency addition
+  beyond the literal desktop port, since every other modal in this
+  codebase (SettingsSheet, the mobile voice-panel sheet) already supports
+  it. Wired `<WhatsNewModal hadExistingInstanceId={...} />` into `App.tsx`
+  alongside the existing `SettingsSheet`/`InstallPrompt`/`Toaster` mounts.
+
+  localStorage Keys: reson8-last-seen-version (whatsNew.ts) — the key was
+  already named in Phase 1's key-naming convention list; this item is what
+  actually reads/writes it for the first time.
+
+  Key Files Modified:
+    src/lib/instanceId.ts — hasExistingInstanceId() added
+    src/lib/whatsNew.ts (NEW)
+    src/features/pwa/WhatsNewModal.tsx (NEW)
+    src/main.tsx — captures hasExistingInstanceId() pre-render, passes to App
+    src/App.tsx — App now takes hadExistingInstanceId prop, mounts
+      <WhatsNewModal>
+
+  Verification:
+    npm run typecheck / lint / test (33/33) / build all pass. Live
+    Playwright pass against the built app (`vite preview`) with the GitHub
+    Releases API intercepted via `page.route` (not real network — avoids
+    depending on whether this repo has actually published a GitHub
+    Release yet, and keeps the scenarios deterministic):
+      1. Truly-first-ever load: no modal, release API never called,
+         `reson8-last-seen-version` silently set to 6.0.0,
+         `reson8-instance-id` stayed unset.
+      2. Returning visitor + version bump + notes available: modal
+         appeared with the exact multi-line body text preserved
+         (`whitespace-pre-wrap`); a deliberately injected
+         `<script>alert(1)</script>` string in the release body rendered
+         as literal visible text with zero extra `<script>` elements
+         added to the DOM — confirms the no-`dangerouslySetInnerHTML`
+         contract holds against an actual XSS-shaped payload, not just by
+         code review. "Got it" closed it and set the last-seen marker
+         (screenshotted).
+      3. Version matches last-seen: no-op, release API never called.
+      4. Returning visitor + version bump + no release published yet
+         (mocked 404): no modal, `reson8-last-seen-version` deliberately
+         left unchanged so it retries next launch.
+      5. Separate pass confirmed Escape-dismiss does NOT mark the version
+         seen — the modal correctly reappeared on a subsequent reload.
+    No real-device pass this session (chromium via Playwright against a
+    local preview server only), consistent with every other Phase 7 item
+    so far — deferred to P7.7.
+
+  Next Step: P7.4 — Badging & Vibration API lifecycle audit.
+
+--- Entry: 17/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.4: Badging & Vibration API lifecycle audit
+
+  Problem: Phase 5 introduced the Badging/Vibration API call sites for
+  Nudge/DM alerts; this phase's job was auditing them for edge cases —
+  specifically the badge never getting "stuck" showing a stale count in
+  either direction — not adding new capability.
+
+  Solution: Audited every call site in `src/services/connectionService.ts`
+  (`src/lib/deviceAlerts.ts`'s `setAppBadge`/`clearAppBadge`/`vibrate`
+  wrappers themselves were already correctly feature-detected and
+  best-effort — no changes needed there) and found three real bugs, not
+  just theoretical ones:
+
+  1. `handleVisibilityChange` unconditionally called `clearAppBadge()` on
+     every tab-focus regain, even when DMs were still genuinely unread — a
+     badge wrongly cleared to zero while real unread state exists is just
+     as broken as a stale nonzero count, in the opposite direction. Fixed
+     to recompute the true remaining DM-unread total on focus and only
+     clear if it's actually zero.
+  2. Nudge's badge contribution was a one-shot `Math.max(dmTotal, 1)`
+     heuristic with no persisted "has this nudge been acknowledged" state,
+     so it could resurface or vanish inconsistently across later badge
+     recomputations. Replaced with an explicit `hasPendingNudgeBadge`
+     module-level flag: set `true` on `NUDGE_RECEIVED`, cleared
+     specifically on the tab regaining focus (the natural "acknowledgment"
+     moment, since the protocol has no per-nudge read receipt the way DMs
+     have `MARK_DMS_READ`) — also reset defensively in `leaveServer()` so
+     a nudge from one connection session can't leak a stale +1 into a
+     later session within the same page load.
+  3. Neither `hydrateUnreadDmPartners()` call site (initial
+     `connectToServer` success, and the post-reconnect rejoin handshake)
+     ever refreshed the OS badge after re-syncing `dmStore` from server
+     truth — a reconnect spanning other unread activity (another device,
+     messages the server already knew about) could leave the icon showing
+     a stale total that no longer matched the app's own freshly-hydrated
+     state. Fixed by chaining `.then(() => pushAppBadgeIfBackgrounded())`
+     onto both.
+
+  New `pushAppBadgeIfBackgrounded()` is the single accurate-recompute
+  helper (sum of unread DMs + the pending-nudge flag, only touches the
+  icon while backgrounded — in-app UI already communicates unread state
+  while focused, preserving Phase 5's original design choice) that every
+  badge-changing call site now goes through instead of ad-hoc
+  `setAppBadge`/`clearAppBadge` calls with locally-reasoned counts.
+
+  Separately, while specifically trying to verify the PRD's own named
+  example scenario ("badge not clearing on logout/disconnect"),
+  discovered `leaveServer()` — which already correctly clears the badge
+  and resets every store — was dead code, never actually called from
+  anywhere in the UI. There was no way for a user to disconnect/log out of
+  a connected server at all (the "Disconnect" keyboard-shortcut slot in
+  Voice & Shortcuts settings is unrelated — it calls `leaveVoiceChannel()`,
+  not `leaveServer()`, matching the desktop client's own voice-only
+  scoping for that shortcut). Confirmed via the desktop client's
+  `renderer.ts` that it has an explicit `btn-disconnect` header button —
+  a real, previously-unported feature gap, not an invented one. Added a
+  minimal "Disconnect" button to Settings -> Application tab (only
+  rendered while `status === "connected"`) that calls the existing,
+  already-correct `leaveServer()` and closes the settings sheet;
+  `RequireConnection`'s existing route guard handles the redirect to
+  `/connect` automatically once `connectionStore` resets.
+
+  Vibration API audit: confirmed the sole call site (Nudge) is correctly
+  feature-detected; found no other reasonable use within this app's actual
+  scope (no "incoming call"-equivalent concept exists here, unlike the
+  PRD's own example) worth adding, per the phase's explicit "not
+  introducing new call sites" instruction.
+
+  Edge Cases Handled:
+    Stale-badge-stuck-nonzero (the PRD's named example) AND the opposite,
+    previously-unnamed case of a badge wrongly wiped to zero while
+    genuinely unread state remains; a reconnect leaving the icon out of
+    sync with freshly-hydrated server truth; a nudge's badge contribution
+    leaking across connection sessions within one page load.
+
+  Key Files Modified:
+    src/services/connectionService.ts — pushAppBadgeIfBackgrounded(),
+      hasPendingNudgeBadge, fixed visibilitychange/hydration call sites
+    src/features/settings/ApplicationTab.tsx — Disconnect button wired to
+      leaveServer()
+
+  Verification:
+    npm run typecheck / lint / build pass. npm run test: 33/33 (one run
+    hit an unrelated Vitest worker-pool startup timeout on
+    ConnectScreen.test.tsx — confirmed as sandbox flakiness by an
+    immediate clean rerun, 5/5 files / 33/33 tests, no code implicated).
+
+    Live Playwright verification with two simultaneous connected clients
+    and a spied-on Badging API (navigator.setAppBadge/clearAppBadge
+    overridden via addInitScript, since real OS-level tab backgrounding
+    can't be simulated headlessly — document.visibilityState itself was
+    overridden with a manual getter + manually-dispatched visibilitychange
+    events, to exercise the real event-handling code path rather than a
+    mocked shortcut): 7/7 assertions passed in one script — DM arrives
+    while backgrounded sets the count correctly across multiple messages
+    from the same partner; focus-regain with DMs still unread correctly
+    does NOT clear the badge; focus-regain after a nudge with nothing else
+    unread correctly clears it; Disconnect clears a genuinely-nonzero
+    badge (verified by first navigating away from the open DM pane so the
+    message actually counted as unread, rather than being implicitly read
+    via the open conversation's activePartnerId match). A second script
+    isolated the reconnect/hydration-resync fix specifically: a message
+    sent while on an entirely different connection generation, verified
+    via a real full-page reload wiping all in-memory JS state between send
+    and reconnect, correctly produces a badge set on the fresh connect
+    with no live DIRECT_MESSAGE_RECEIVED event needed that session (1/1).
+
+    No real-device pass this session, consistent with every other Phase 7
+    item so far — deferred to P7.7.
+
+  Next Step: P7.5 — accessibility gate (axe-core audit across every
+  route/surface).
+
+--- Entry: 17/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.5: Accessibility gate (axe-core audit across every
+route/surface)
+
+  Problem: Every Phase 7 item so far had been verified live, but no
+  comprehensive `axe-core` pass had been run across the app since Phase 1's
+  P1.6 basic sweep (connect screen only). This phase's own PRD wording treats
+  "zero automated violations" as a launch-blocking gate, not a target — the
+  job was to audit every route/surface named in the PRD (connect screen, app
+  shell at all 3 breakpoints, every Settings tab, every modal/sheet, the
+  voice panel, chat composer + emoji picker, admin surfaces) and fix whatever
+  it found, not just run the tool once and report a number.
+
+  Solution: `@axe-core/playwright` was already a devDependency (^4.13.0,
+  pre-installed before this session, confirmed via `package.json`) with one
+  existing test (`e2e/accessibility.spec.ts`, connect-screen only). Rather
+  than trying to force the full authenticated-app surface list into that
+  committed Playwright-runner spec (most of it needs a live Socket.io
+  connection, which this repo's e2e config has never depended on — the
+  committed spec only exercises the pre-connection connect screen), this
+  session followed the same pattern established by every prior Phase 7 item:
+  a throwaway `axe-audit.mjs` script under scratchpad, driving two real
+  connected clients (an admin + a member instance, mock server started with
+  `MOCK_ADMIN_NICKNAME=AxeAdmin`) against the built app via `playwright-core`
+  + `AxeBuilder`, walking every PRD-named surface and calling `.analyze()` at
+  each state. `e2e/accessibility.spec.ts` itself was left as-is (still the
+  right, minimal thing to commit — it's the one surface reachable without a
+  live server).
+
+  Iterated the live audit script to completion across 33 distinct
+  surface/breakpoint states with **zero violations remaining on every one**:
+  connect screen (base/md/lg, password-visible, validation-error states),
+  app shell channel list (base/md/lg), the md channel drawer, a real chat
+  channel with composer + open emoji picker + a sent message, the message
+  actions menu + its delete-confirm AlertDialog, the NSFW channel
+  confirmation dialog, the DMs list (empty and with-unread), the Online
+  Users dialog, a DM thread with a real message (both sides), the voice
+  panel as both the mobile full-screen sheet and the lg persistent pane, the
+  occupant actions popover (kick/mute), and all 7 Settings tabs (About,
+  Application, Roles, Emojis, Server, Voice & Shortcuts, Audio) at both base
+  and the lg layout, including non-empty states for Emojis (seeded a
+  PENDING emoji via a new scratch-only mock-server test route,
+  `/test/create-pending-emoji/:name`, mirroring the existing
+  `/test/approve-emoji/:name` pattern) and Roles (an expanded user row).
+
+  Real violations found and fixed (not test-script noise — each was a
+  genuine defect, confirmed by re-running the audit clean afterward):
+
+  1. **color-contrast** (connect screen validation errors): `text-destructive`
+     used directly as foreground text on `--card`/`--background` only hit
+     ~2.8:1 — `--destructive` was tuned in an earlier phase specifically for
+     the *opposite* pairing (light text ON a `--destructive` fill, e.g.
+     buttons/badges), not for use as plain text on a dark surface. Added a
+     new `--destructive-text: oklch(0.68 0.19 25)` token (paired
+     `--color-destructive-text` theme mapping) and swapped every plain-text
+     usage (form errors, destructive dropdown items, destructive icons, the
+     toaster's error variant, DM "Ban" hover state) from `text-destructive`
+     to `text-destructive-text` — left every actual fill usage
+     (`bg-destructive` buttons/badges) untouched, since that pairing was
+     already correct.
+
+  2. **nested-interactive** (channel list, every breakpoint; voice mini-bar):
+     `ChannelRow` (ChannelTreePanel.tsx) wrapped its whole clickable row in a
+     `<div role="button">` that also contained `ChannelActionsMenu`'s real
+     `<button>` kebab trigger — one interactive control nested inside
+     another. Restructured so the outer element is a plain (non-interactive)
+     `<div>` and the row's own click/keyboard-activation target is a real
+     sibling `<button>` (dropped the manual `onKeyDown` Enter/Space handler
+     entirely — a native `<button>` gets that for free). Same exact bug and
+     fix shape in `VoiceMiniBar.tsx`: the outer `<button onClick={expand}>`
+     wrapped three more `<Button>`s (Mute/Deafen/Leave); split into a plain
+     wrapper `<div>` + a sibling `<button aria-label="Expand voice panel">`
+     covering just the tap-to-expand area, with the three action buttons as
+     siblings (their `e.stopPropagation()` calls were dead code afterward
+     and removed).
+
+  3. **aria-dialog-name** (emoji picker popover) / and the same **modal
+     side effects** on Radix `DropdownMenu`: Radix's `Popover.Content`
+     renders `role="dialog"` with no accessible name by default — added
+     `aria-label="Emoji picker"` / `aria-label={\`Actions for ${nickname}\`}`
+     to the two `PopoverContent` usages (EmojiPicker, OccupantActionsPopover).
+     Separately, and more significantly: Radix `DropdownMenu`'s default
+     `modal={true}` correctly aria-hides the rest of the page while open
+     (as verified — this is real, working "hide others" behavior, not a
+     bug) but the surrounding page content (Settings button, `<main>`, the
+     bottom tab bar) was still fully *focusable* while hidden — a real
+     **aria-hidden-focus** violation, which cascaded into **landmark-one-main**
+     and **page-has-heading-one** failing too (the app's only `<main>` and
+     only `<h1>` both live inside that hidden wrapper). A 3-item kebab menu
+     doesn't need true modal/focus-trap semantics — set `modal={false}` on
+     all three real `<DropdownMenu>` usages (ChannelActionsMenu, MessageRow,
+     DmMessageRow), each with a comment explaining why. This alone fixed 3
+     of the 4 combined violations; the 4th (**region** — the portaled
+     `DropdownMenuContent` wrapper isn't contained by any landmark) was
+     fixed by dropping `DropdownMenuPrimitive.Portal` from the shared
+     `components/ui/dropdown-menu.tsx` entirely: Radix's Popper positioning
+     is `position: fixed` regardless of Portal use, so visual
+     placement/escaping-ancestor-clipping is unaffected (confirmed via a
+     screenshot with the message-row kebab open inside the scrollable
+     message list — no clipping), but the content is now a DOM descendant
+     of `<main>` instead of `document.body`, satisfying the landmark check
+     for real rather than suppressing the rule.
+
+  4. **aria-prohibited-attr** (DM thread, and — once specifically checked —
+     the two other places with the identical shape): a bare `<span
+     aria-label="Online"/"Offline">` decorative dot. `<span>`'s implicit
+     ARIA role is "generic", which per spec *prohibits* naming properties
+     (`aria-label`/`aria-labelledby`) regardless of content — this wasn't
+     reachable via the audit's own "Online Users dialog" state (that state
+     was captured before the async user-list fetch resolved, so the
+     identical span in `OnlineUsersDialog.tsx` never actually got exercised
+     there) but is the same defect. Fixed all three occurrences
+     (`OnlineUsersDialog.tsx`, `DmsListPage.tsx`, `DmPane.tsx`) by making the
+     dot `aria-hidden="true"` and adding an adjacent `sr-only` text span for
+     the actual "Online"/"Offline" announcement. Proactively swept the rest
+     of the codebase for the same anti-pattern (decorative
+     dot/emoji-plus-`aria-label` — this had clearly been copy-pasted several
+     times) and fixed every other instance the same way: unread-message dots
+     in `ChannelTreePanel.tsx`, `ChatRoute.tsx`, `ChatTabPage.tsx`,
+     `DmRoute.tsx`, `BottomTabBar.tsx`; the "Joining…" dot and
+     Deafened/Muted/Away emoji spans in `ChannelTreePanel.tsx` and
+     `VoicePanel.tsx`. `AppHeader.tsx`'s DM NavLink was a special case (it
+     already carries its own explicit `aria-label="Direct Messages"`, which
+     overrides all descendant content including a sibling `sr-only` span) —
+     fixed by folding the unread state directly into that label instead:
+     `aria-label={hasUnreadDms ? "Direct Messages (unread)" : "Direct
+     Messages"}`.
+
+  5. **aria-input-field-name** (Voice & Shortcuts tab, Audio tab, Settings
+     lg layout): the shared `Slider` component (`components/ui/slider.tsx`)
+     never forwarded an accessible name to Radix's `SliderPrimitive.Thumb`
+     (the actual `role="slider"` element) — every slider in the app was an
+     unlabeled input field. Added an `aria-label` prop to `Slider`, forwarded
+     to each `Thumb`, and set it at every call site: noise-gate threshold
+     (VoiceShortcutsTab), the three volume rows (AudioTab: Voice Chat/Alert/
+     Nudge Volume), per-occupant volume (OccupantActionsPopover), and the
+     emoji-crop zoom slider (CustomEmojiUploadDialog) — found by grepping
+     for every `<Slider` usage after fixing the first one, not just the ones
+     the live audit happened to reach.
+
+  6. **region** (mobile voice panel sheet): the base/md full-screen
+     `voicePanelOpen` sheet in `AppShell.tsx` had no `role`/landmark at all,
+     despite being functionally identical to `SettingsSheet` (full-screen,
+     has its own heading + Close button). Brought it up to the same modal
+     contract `SettingsSheet` already uses: `role="dialog" aria-modal="true"
+     aria-labelledby="voice-panel-heading"`, a focus-on-open + Escape-to-close
+     `useEffect` (this sheet previously had *no* Escape handler at all —
+     every other modal in this codebase already supports it, per the P7.3
+     entry's own note), and `tabIndex={-1}` on the panel for the initial
+     focus target.
+
+  Test-script-only issues fixed along the way (not product bugs — noted
+  here since they're exactly the kind of trap a future live-verification
+  session in this repo will hit again otherwise): (a) `page.goto()` to an
+  already-connected `/app/*` path performs a hard reload, which silently
+  drops the in-memory-only `connectionStore` and redirects to `/connect` —
+  several early script iterations were unknowingly auditing the connect
+  screen a second time and reporting false "PASS"es for app-shell states;
+  fixed by routing all post-connect navigation through the bottom tab bar's
+  real links, and added an `assertConnected()` guard that throws if a
+  surface-under-audit is unexpectedly back on `/connect`. (b) An unscoped
+  `getByText("AxeAdmin")` / `getByRole("link", { name: "DMs", exact: true
+  })` can resolve to a same-text element that's still in the DOM but
+  legitimately hidden behind an open modal (confirmed via `aria-hidden`
+  inspection — not itself a bug) or whose accessible name changed once an
+  unread-badge `sr-only` span got added inside it (a direct, expected side
+  effect of fix #4 above) — fixed by scoping locators to the open
+  `[role="dialog"]` / matching by stable `href` instead of exact visible
+  text.
+
+  Manual supplements (per the PRD, for what `axe-core` can't catch):
+    - **Keyboard-only navigation**: a separate script Tab'd through the
+      connect screen (6 focusables, no trap, reaches the input and Connect
+      button), the connected app shell's channels list (10 focusables, no
+      trap, reaches Settings and every bottom tab), confirmed the
+      restructured `ChannelRow` button activates via Enter (navigates to
+      the channel, exactly as the old `onClick`-on-a-div version did, now
+      via native semantics instead of a manual keydown handler), and opened
+      + Tab'd through + Escaped the Settings sheet entirely via keyboard
+      (Tab order stayed within the sheet's own controls across the range
+      tested; Escape closed it and returned `document.activeElement` to
+      nothing stuck/trapped). Not tested via keyboard: the full DM/emoji-
+      picker/voice-panel keyboard flows specifically — covered indirectly
+      by the axe pass's structural checks (correct roles/tab order
+      primitives) but not walked start-to-finish with a real Tab sequence
+      this session.
+    - **Color-contrast spot-check against `src/index.css`'s final tokens**:
+      a script rendered every meaningful foreground/background token pair
+      (17 pairs — `--foreground`/`--card-foreground`/`--popover-foreground`
+      on their surfaces, `--muted-foreground`, the new
+      `--destructive-text`, `--destructive-foreground` on `--destructive`,
+      `--primary`/`--primary-foreground`, `--success`, `--warning`,
+      `--accent-foreground`, `--secondary-foreground`) and computed real
+      WCAG contrast ratios. First attempt produced nonsense ~1:1 ratios for
+      *every* pair — this Chromium build's `getComputedStyle().color`
+      returns the color verbatim in whatever function it was authored in
+      (`oklch(0.96 0.005 285)`), and naively regexing the first 3 numbers
+      out of that string reads it as `rgb(0.96, 0.005, 285)`. Fixed by
+      resolving every color through a 1x1 canvas `fillStyle` round-trip
+      (canvas rendering always normalizes to concrete sRGB regardless of
+      input color space) before computing luminance. All 17 pairs pass
+      WCAG AA's 4.5:1 normal-text threshold once correctly measured (5.88–
+      17.54:1 range) — `--success`/`--warning`/`--primary` as plain text
+      were already fine and needed no changes; only `--destructive-text`
+      (new, fix #1 above) was actually broken.
+    - **Screen-reader smoke test**: **not performed.** This sandbox is
+      headless with no VoiceOver/TalkBack available — consistent with every
+      prior Phase 7 entry's honesty about real-device gaps, this is
+      explicitly flagged as unverified rather than assumed-fine, and
+      remains deferred to P7.7's real-device pass.
+
+  Key Files Modified:
+    src/index.css — new --destructive-text token + theme mapping
+    src/components/ui/dropdown-menu.tsx — modal-less Content, dropped Portal
+    src/components/ui/slider.tsx — forwards aria-label to Thumb
+    src/components/ui/toaster.tsx — text-destructive-text swap
+    src/app/AppShell.tsx — voice sheet role=dialog/focus/Escape, aside
+      landmark for the lg pane, aria-hidden background while
+      drawer/voice-panel sheet is open
+    src/app/AppHeader.tsx, src/app/BottomTabBar.tsx — unread-badge
+      aria-hidden+sr-only fixes
+    src/features/channels/ChannelTreePanel.tsx — ChannelRow
+      nested-interactive restructure, decorative-span fixes
+    src/features/channels/ChannelActionsMenu.tsx — modal={false}
+    src/features/channels/CreateChannelDialog.tsx — text-destructive-text
+    src/features/chat/{ChatRoute,ChatTabPage,MessageRow,Composer}.tsx —
+      unread-dot fixes, modal={false}, text-destructive-text
+    src/features/dm/{DmRoute,DmsListPage,DmPane,OnlineUsersDialog,
+      DmMessageRow}.tsx — decorative-span fixes, modal={false}
+    src/features/emoji/{EmojiPicker,CustomEmojiUploadDialog}.tsx —
+      aria-label on Popover content / Slider
+    src/features/settings/{AudioTab,VoiceShortcutsTab}.tsx — Slider
+      aria-label, text-destructive-text
+    src/features/voice/{VoiceMiniBar,VoicePanel,OccupantActionsPopover,
+      MicPermissionDeniedPanel}.tsx — nested-interactive restructure,
+      decorative-span fix, Slider/Popover aria-label, text-destructive-text
+    e2e/accessibility.spec.ts — unchanged (still connect-screen-only; see
+      Solution above for why the comprehensive pass stayed a scratch script)
+
+  Verification:
+    npm run typecheck / lint / test (33/33) / build all pass after every
+    round of fixes. Live `axe-core` pass via the scratch `axe-audit.mjs`
+    script (two real connected clients against the built app + mock
+    server, `playwright-core` + `@axe-core/playwright`): 33/33 surfaces
+    clean on the final run, zero violations anywhere. A follow-up
+    screenshot pass (`screenshot.mjs`) visually confirmed the three
+    structurally-restructured surfaces (channel list, voice mini-bar,
+    message actions menu) still render and lay out correctly — no visual
+    regression from the nested-interactive/Portal-removal fixes. Keyboard-
+    only and color-contrast manual supplements per above; screen-reader
+    smoke test explicitly not performed (sandbox limitation, deferred to
+    P7.7).
+
+  Next Step: P7.6 — Performance budget (Lighthouse CI, code-splitting,
+  bundle-size budget).
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.6: Performance budget (Lighthouse, code-splitting,
+bundle-size budget)
+
+  Problem: The entire app shipped as one JS bundle (965KB raw / 260.67KB
+  gzip) — a connect-screen visitor downloaded the whole channels/chat/dm/
+  voice feature set, every Settings tab (including admin-only ones), the
+  full ~552-entry emoji dataset, and `mediasoup-client` before ever
+  connecting. A baseline mobile-throttled Lighthouse run confirmed this was
+  a real, measured problem, not just theoretical: Performance 69/100 (Total
+  Blocking Time 840ms, ~175KB estimated unused JS) — well under the phase's
+  ≥90 target. The desktop-preset run scored 100/100/100, which would have
+  been a misleadingly clean signal on its own; testing with mobile
+  throttling (this app's own stated positioning) surfaced the real gap.
+
+  Solution: Installed `lighthouse` (^13.4.1) as a devDependency (network
+  access confirmed available this session; `npm view` succeeded before
+  installing). Its CLI needs `CHROME_PATH` explicitly set in this sandbox —
+  pointed at the same Playwright-managed Chromium binary every prior
+  session's live-verification passes have used
+  (`~/.cache/ms-playwright/chromium-1234/chrome-linux/chrome`).
+
+  Route-based code splitting (`React.lazy` + `Suspense`, matching the PRD's
+  "React Router's lazy route loading" phrasing) applied at four levels:
+    1. The entire `/app` route tree in `App.tsx` — `AppShell` and every
+       route element under it (`ChannelsPage`, `ChatRoute`, `ChatTabPage`,
+       `DmsListPage`, `DmRoute`, the voice `PlaceholderPane`). This is the
+       single biggest boundary: nothing under `RequireConnection` is
+       reachable before a successful `USER_JOIN_SERVER`, so none of it
+       belongs in the connect-screen's initial payload.
+    2. `SettingsSheet`'s three admin-only tabs (`RolesTab`,
+       `EmojiApprovalTab`, `ServerSettingsTab`) — most connected users never
+       hold the permissions to see these tabs at all, and even admins don't
+       need the code until Settings is open on that specific tab.
+    3. `EmojiPicker`'s heavy content: `EmojiPickerContent` (the emoji
+       dataset) and `CustomEmojiUploadDialog` (the crop tooling) — deferred
+       until the picker popover is actually opened / the upload dialog is
+       actually requested, per the PRD's explicit naming of this dataset.
+    4. `mediasoup-client` itself, via a *dynamic* `import("mediasoup-client")`
+       inside `voiceService.ts`'s `joinVoiceChannel()` (not a route-level
+       split): `connectionService.ts` — necessarily eager, since it's what
+       `ConnectScreen` calls — statically imports `voiceConnectionService`
+       to wire up `NEW_PRODUCER`/`PRODUCER_CLOSED`/etc. socket listeners at
+       connect time, and that import chain reached all the way down to
+       `voiceService.ts`'s top-level `import { Device } from
+       "mediasoup-client"`. Converting just that one value import (the
+       `MsTypes` *type* import stayed static — type-only imports are erased
+       at compile time regardless) to a dynamic import inside the one
+       method that actually calls `new Device()` moved all ~226KB raw /
+       ~39.5KB gzip of `mediasoup-client` into its own chunk, fetched only
+       when a user genuinely joins voice.
+
+  Real bug found and fixed mid-implementation, worth flagging for any
+  future session doing similar work in this repo: **`React.lazy` +
+  `Suspense` alone does not defer anything for an unconditionally-rendered
+  component.** The Suspense boundary only shows a fallback *while* the
+  import is in flight — if the lazy component is in the JSX tree from the
+  very first render (as `<SettingsSheet/>` and `<InstallPrompt/>` were,
+  both mounted unconditionally alongside `<Routes>` in `App.tsx`), its
+  `import()` still fires immediately, same as a static import would, just
+  with an extra fallback frame. Confirmed via a live network-request
+  capture on `/connect`: the first `React.lazy` pass still eagerly fetched
+  `SettingsSheet-*.js` (and its transitive `slider`/`MicLevelMeter` chunks)
+  and `InstallPrompt-*.js` on page load. Fixed by adding a `hasEverConnected`
+  latch in `App.tsx` (derived during render per React's own documented
+  pattern for this exact case — `if (status === "connected" &&
+  !hasEverConnected) setHasEverConnected(true)`, not in a `useEffect`,
+  which the project's ESLint config's `react-hooks/set-state-in-effect`
+  rule correctly flagged as an anti-pattern here) and only mounting those
+  two components once true. Neither needs to exist before a successful
+  connection: Settings' only trigger lives in `AppHeader` (inside the
+  already-deferred `AppShell`), and `InstallPrompt` already no-ops
+  internally until `status === "connected"`. Re-verified via a real
+  Playwright network capture after the fix: only 4 JS files load on
+  `/connect` now (the index chunk, `rolldown-runtime`, `createLucideIcon`,
+  and the async `workbox-window` service-worker registration script).
+
+  Bundle-size budget: set to **≤ 160KB gzipped** for the connect-screen's
+  initial JS payload (recorded in the phase 7 PRD's P7.6 section, per its
+  own instruction to fill this in once a real measurement exists — no
+  longer "don't guess," there's now code). Actual measured value:
+  132.5KB gzip. Added a real enforcement script,
+  `scripts/check-bundle-size.mjs` (wired as `npm run check:bundle-size`,
+  documented in CLAUDE.md's Commands list), that parses `dist/index.html`
+  for the entry `<script>` + every `modulepreload` `<link>` Vite emits
+  (i.e. exactly what a first-time visitor's browser fetches before the app
+  is interactive — deliberately excludes the async, non-blocking
+  `workbox-window` SW-registration fetch, which isn't part of that
+  critical path), gzips each with Node's own `zlib`, sums them, and exits
+  non-zero over budget. Not wired into a CI pipeline this phase (no CI
+  pipeline exists yet — that's P7.8/deployment territory) but is a real,
+  runnable check now rather than just a documented number.
+
+  PWA installability: Lighthouse 13.4.1 has **no `pwa` category and no
+  installable-manifest/service-worker/splash-screen audits at all**
+  (confirmed via `--list-all-audits` returning zero matches for
+  "pwa"/"install"/"manifest"/"worker"/"maskable"/"splash", and zero files
+  under `node_modules/lighthouse` matching "pwa") — Google removed the
+  built-in PWA category from Lighthouse core in a recent major version,
+  well before this session's install. The PRD's own wording ("Lighthouse CI
+  *or equivalent*") anticipated exactly this kind of tooling gap. Wrote an
+  equivalent scripted check covering the same underlying criteria Chrome
+  itself uses for install eligibility: manifest linked + fetchable + has
+  `name`/`short_name`/`display`/`start_url`, a ≥192×192 icon, a ≥512×512
+  icon, a maskable icon, every listed icon actually resolving (not just
+  listed), the service worker reaching `active` state, and secure-context
+  (`window.isSecureContext`, true on `localhost` per spec — matches this
+  repo's own documented dev-environment carve-out). All 14 checks pass.
+
+  Image/icon compression: checked rather than changed. Temporarily
+  reinstalled `sharp` (`--no-save`, same pattern as P7.1's session —
+  confirmed it did **not** leak into `package-lock.json` this time either,
+  verified via `git diff` before removing it again) and ran a lossless PNG
+  re-encode pass (`compressionLevel: 9, effort: 10, palette: false`) over
+  all four manifest/apple-touch icons generated in P7.1. Savings were
+  marginal (1.2–4.6%) — the icons were already reasonably compressed at
+  generation time — so left the actual files untouched rather than
+  re-touching launch-critical, already-screenshot-verified assets for a
+  few KB neither Lighthouse nor the bundle budget cares about (icons aren't
+  part of the initial JS payload; they're fetched by the browser's
+  manifest-processing flow, not the critical rendering path).
+
+  Results (all four P7.6 targets met):
+    - Performance: 97/100 (mobile-throttled, default Lighthouse preset) —
+      up from 69/100 baseline. Desktop preset: 99/100 (up from 100/100,
+      i.e. stayed maxed — desktop's generous thresholds were already
+      masking the real mobile-specific problem, which is exactly why the
+      mobile preset was the one that mattered here). Total Blocking Time
+      840ms -> 70ms; total page weight on `/connect` 287KB -> 170KB.
+    - PWA installability: pass (14/14 equivalent checks, per the
+      Lighthouse-category-removal note above).
+    - Accessibility: 100/100 (both presets) — consistent with P7.5's own
+      zero-violations result; re-ran that phase's full 33-surface live axe
+      audit against this session's rebuilt app afterward specifically to
+      confirm the Suspense-boundary restructuring introduced no
+      regression — still 33/33 clean.
+    - Best Practices: 100/100 (both presets).
+    - `unused-javascript` still flags ~77KB of estimated savings on the
+      main index chunk (inherent React/react-router/react-hook-form/zod/
+      zustand/socket.io-client framework overhead not exercised by the
+      connect screen specifically) — not chased further given Performance
+      is already 97-99/100 and TBT dropped to 70ms; diminishing returns
+      relative to the risk of deeper vendor-splitting surgery on
+      already-stable, already-tested code.
+
+  Key Files Modified:
+    src/App.tsx — lazy /app route tree, lazy SettingsSheet/InstallPrompt
+      gated on hasEverConnected latch
+    src/features/settings/SettingsSheet.tsx — lazy admin tabs
+      (RolesTab/EmojiApprovalTab/ServerSettingsTab)
+    src/features/emoji/EmojiPicker.tsx — lazy EmojiPickerContent +
+      CustomEmojiUploadDialog
+    src/services/voiceService.ts — dynamic import("mediasoup-client")
+      inside joinVoiceChannel()
+    scripts/check-bundle-size.mjs (NEW) — budget enforcement script
+    package.json — lighthouse devDependency, check:bundle-size script
+    CLAUDE.md — documented the new command
+    app-planning/07-phase7-pwa-platform-polish.md — recorded the concrete
+      160KB gzip budget decision in the P7.6 section
+
+  Verification:
+    npm run typecheck / lint / test (33/33, one unrelated Vitest
+    worker-pool startup timeout on a clean rerun — same known sandbox
+    flakiness noted in prior Phase 7 entries) / build all pass.
+    `npm run check:bundle-size`: 132.5KB gzip, under the 160KB budget.
+    Live Playwright smoke test across every lazy boundary (connect as both
+    a non-admin and the mock server's admin nickname): AppShell, ChatRoute,
+    the emoji picker, DmsListPage, SettingsSheet, and every admin tab
+    (Roles/Emojis/Server) all render correctly with zero console errors
+    (one benign 404 for a `/uploads/placeholder` fixture URL left over from
+    P7.5's mock-server emoji seed — pre-existing test-fixture noise, not a
+    regression). Lighthouse runs (mobile + desktop presets) and the P7.5
+    axe-core re-run (33/33 clean) both described above under Results.
+    No real-device pass this session, consistent with every Phase 7 item
+    so far — deferred to P7.7.
+
+  Next Step: P7.7 — Cross-device/cross-browser testing matrix.
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Out-of-band bug fixes ahead of P7.7 — channel-tree listener
+race, false-positive "Insufficient Permissions" alert, and a forgotten
+Voice tab route
+
+  Problem: The user reported two real-device bugs against a live `reson8`
+  server (not this sandbox's mock server) severe enough to warrant fixing
+  before continuing to P7.7's device-testing pass:
+    1. The Channels tab frequently showed no channels at all on a fresh
+       connect for non-admin users, paired with an "Insufficient
+       Permissions" toast + sound firing unprompted — intermittent, and it
+       "fixed itself" once after repeated reloads/backgrounding the mobile
+       Chrome app, then wouldn't reproduce reliably again.
+    2. The bottom-tab "Voice" destination still showed "Coming in Phase 2"
+       even though voice has been fully functional since that phase.
+
+  Solution:
+
+  **Bug 1a — channel tree silently empty (root cause: a listener-
+  registration race, confirmed against both this repo and
+  `../reson8/apps/server`'s actual source):**
+  `connectionService.ts`'s `connectToServer()` only called
+  `attachLifecycleListeners()` — which is where `socket.on("CHANNEL_TREE_
+  UPDATE", ...)` gets registered — *inside* the `USER_JOIN_SERVER` ack's
+  `.then()` callback, i.e. strictly after the ack had already arrived. The
+  real server's `USER_JOIN_SERVER` handler
+  (`../reson8/apps/server/src/handlers/connection.handler.ts:286-288`)
+  sends `CHANNEL_TREE_UPDATE` and *then* the ack, as two separate packets
+  over the same connection, in that fixed order. On this repo's own mock
+  server (which had always acked first, then emitted the tree — the
+  opposite, "safe" order) this race could never surface, which is exactly
+  why 7 phases of live-Playwright verification against it never caught it.
+  On a real network the two packets can be processed close enough together
+  that the tree event dispatches to zero listeners (registration hadn't
+  run yet) and is dropped for good — `channelTreeStore` has no merge/retry
+  logic, so it just stays empty until some unrelated later broadcast
+  happens to repopulate it, matching the user's exact "fixed itself once,
+  then wouldn't reproduce" description.
+
+  Fixed by moving `attachLifecycleListeners()` to run *before*
+  `socketService.joinServer()` is even called (immediately in `onConnect`,
+  right after the socket connects) — every lifecycle listener, not just
+  the tree one, is now live before any server response can possibly
+  arrive, regardless of packet timing. Added `cleanupLifecycle?.()` to the
+  join-failure branch too, since listeners are now attached before we know
+  whether the join actually succeeds (previously not needed, since
+  attachment only ever happened after success).
+
+  **Bug 1b — false-positive "Insufficient Permissions" toast + sound
+  (root cause found by reading `../reson8/apps/server`'s actual
+  `requirePermission` middleware, per the user's specific request):**
+  `permissions.middleware.ts`'s `requirePermission()` — confirmed as the
+  *only* place this server ever emits the broadcast `ERROR` event, across
+  every handler that uses it (channel/admin/message/moderation/emoji/
+  nudge) — unconditionally fires `socket.emit("ERROR", {code:
+  "PERMISSION_DENIED", ...})` on every denial, *in addition to*, never
+  instead of, failing that same call's own ack. Every real user-initiated
+  blocked action in this client already surfaces its own toast from that
+  ack failure via `reportAckError()` (channelService/adminService/
+  chatService/emojiService/dmService all call it) — so the broadcast
+  `ERROR` event is provably 100% redundant information in every legitimate
+  case. Worse: `permissionsService.ts`'s `refreshPermissions()` runs
+  automatically on *every* connect (there's no dedicated "what are my own
+  permissions" event — Phase 3's own documented workaround is to call
+  `GET_ALL_USERS`, itself gated behind `MANAGE_ROLES`, and self-identify by
+  nickname match) and deliberately, silently treats its own denial as "no
+  elevated permissions" — a normal, expected outcome for any non-admin,
+  with no toast of its own. But the server still fires the broadcast
+  `ERROR` for that exact denial regardless, and `connectionService.ts`'s
+  global `handleError` played the `insufficient_perms` sound + a toast for
+  *any* permission-shaped broadcast `ERROR` unconditionally — meaning every
+  single non-`MANAGE_ROLES` user got this alert on every single connect,
+  for an action they never took.
+
+  Fixed by making `handleError` skip the toast entirely for `PERMISSION_
+  DENIED`/`NOT_AUTHENTICATED`-shaped broadcast errors (still shown for any
+  other/unexpected error code, so genuine server problems still surface).
+  This required going back to `../reson8/apps/server` specifically — the
+  client repo alone couldn't prove the broadcast and the ack-based paths
+  were unconditionally paired, only that they *could* be; reading the
+  actual `requirePermission` call sites is what turned "plausible theory"
+  into "confirmed, every single call site does this."
+
+  **Bug 2 — Voice tab (confirmed forgotten wiring, not a UI bug):**
+  `App.tsx` still routed `/app/voice` to a literal, unmodified Phase 1
+  `PlaceholderPane` stub. `VoicePanel` (occupant list, mute/deafen/leave,
+  PTT, mic level meter) has been fully built and working since Phase 2,
+  and is already used identically in two other places
+  (`AppShell.tsx`'s `lg` persistent `<aside>` pane, and the mobile
+  `VoiceMiniBar`-triggered full-screen sheet) per this app's own "one
+  component set, three compositions" pattern (P2.11) — the bottom tab's
+  "Voice" destination was simply never updated to be that pattern's fourth
+  composition. Fixed by routing `/app/voice` to `<VoicePanel/>` directly
+  (lazy-loaded, consistent with every other P7.6 route split). Deleted
+  `src/app/PlaceholderPane.tsx` entirely — once this was its only caller,
+  it became genuinely dead code (grepped to confirm no other reference).
+
+  Edge Cases Handled:
+    Join failure after early listener attachment (Bug 1a's fix) now
+    explicitly tears down `cleanupLifecycle` before disconnecting, so a
+    failed join (bad password, banned, etc.) doesn't leak the
+    `visibilitychange` DOM listener `attachLifecycleListeners` also
+    registers (that one isn't cleaned up by the socket's own disconnect,
+    unlike the socket event listeners).
+
+  Mock Server Changes (scratch, not committed — see CLAUDE.md's mock-
+  server section):
+    Fixed two divergences from the real server's actual behavior that are
+    exactly why neither bug ever surfaced in 7 phases of this session's own
+    live-Playwright verification against it: `USER_JOIN_SERVER` now emits
+    `CHANNEL_TREE_UPDATE` *before* the ack (previously acked first);
+    `requireFlag()` now also emits the broadcast `ERROR` event on denial,
+    matching `requirePermission()` exactly (previously only failed the
+    ack). Both changes are copied forward in the running mock server
+    instance for this session; whoever picks this mock server up next
+    should carry these fixes forward too rather than reverting to the
+    old, inaccurate ordering.
+
+  Key Files Modified:
+    src/services/connectionService.ts — attachLifecycleListeners() moved
+      before joinServer(), cleanup added to the failure path,
+      handleError() no longer toasts/sounds for permission-shaped
+      broadcast ERROR events
+    src/App.tsx — /app/voice now renders VoicePanel (lazy), PlaceholderPane
+      import removed
+    src/app/PlaceholderPane.tsx (DELETED) — no longer referenced anywhere
+
+  Verification:
+    npm run typecheck / lint / test (33/33) / build / check:bundle-size
+    (132.5KB gzip, unchanged) all pass.
+
+    Live Playwright verification against the corrected mock server (see
+    above): connecting as a non-admin user now shows all 3 channels
+    immediately despite the exact adverse emit-then-ack ordering that
+    exposed the race, and produces zero permission-related toasts despite
+    the automatic `refreshPermissions()` call being denied server-side
+    exactly as before (confirmed the denial still happens — the broadcast
+    `ERROR` still fires — it's just no longer surfaced to the user).
+    Screenshotted the Voice tab in both the not-joined ("Not in a voice
+    channel.") and joined (session timer, occupant list, mute/deafen/leave
+    controls) states — matches the same component's appearance in its two
+    other existing usages exactly, as expected. Re-ran the full P7.5
+    33-surface axe-core audit afterward — still 33/33 clean, no
+    accessibility regression from any of the three fixes.
+
+    Not verified: the exact real-device intermittency the user described
+    (this was reproduced via corrected *mock*-server packet ordering, not
+    the actual reported device/network — the root-cause analysis is against
+    real server source code, which is the strongest verification available
+    without that specific device in hand; full real-device confirmation is
+    P7.7's job).
+
+  Next Step: Resume Phase 7 at P7.7 — Cross-device/cross-browser testing
+  matrix (a real-device pass against these three fixes specifically, not
+  just the general matrix, would be the most valuable place to start).
+
+=== Version bumped to 6.1.0 (18/08/2026) — classification: MINOR ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.7: Cross-device/cross-browser testing matrix
+(automated portion)
+
+  Problem: P7.7's own PRD wording requires "real-device (not purely
+  emulated)" testing across a specific platform/browser matrix — the
+  hardest phase item to satisfy from a sandboxed agent environment with no
+  physical devices. Before starting, confirmed exactly what this sandbox
+  can and can't do rather than assuming: Playwright's Firefox engine isn't
+  installed here at all, and its WebKit engine (Safari's rendering engine)
+  hangs/crashes on `page.goto` regardless of viewport (confirmed via a
+  direct launch test — not limited to the "mobile-safari" device-emulation
+  project specifically, as earlier phase entries had assumed; genuine
+  desktop WebKit fails identically). Only the Chromium engine is usable
+  here, at any viewport/device emulation.
+
+  Solution: Per the user's explicit choice (asked directly rather than
+  guessing), split the matrix into what this session verifies now
+  (automated, Chromium-only) versus what needs the user's own real
+  hardware (everything else) — see the new
+  `app-planning/P7.7-real-device-checklist.md`.
+
+  **Automated portion — the two P0 rows Chromium can faithfully
+  represent** ("Desktop Chrome/Edge", since Edge is Chromium-based too, and
+  "Android phone Chrome", using Playwright's real `Pixel 7` device
+  descriptor — not a fabricated viewport, the actual UA/viewport/
+  deviceScaleFactor/touch profile Playwright ships for that device): a
+  scratch sweep script drove both profiles through connect → channel tree
+  → chat send → emoji picker → voice join/mute/leave → Settings sheet →
+  service-worker-active, explicitly re-checking all three of this
+  session's earlier bug fixes at each viewport (channel-tree race,
+  false-positive permission toast, Voice tab placeholder). 22/22 checks
+  passed on both profiles on the final clean run.
+
+  Getting to that clean run took real iteration, worth recording since the
+  failure modes are exactly the kind that would recur in a future
+  session's own live-verification work against this same mock server: (1)
+  a fixed 400ms wait after connecting produced false "channel tree empty"
+  negatives under this sandbox's currently-elevated load (many browser
+  contexts opened this session) — replaced with waiting for the actual
+  content to attach rather than a guessed duration; (2) an unscoped
+  `nav[aria-label="Channels"]` selector hit a strict-mode violation at
+  desktop width, because `ChannelsPage`'s own `lg:hidden` inline copy of
+  the channel tree carries the identical `aria-label` — same
+  duplicate-hidden-instance class of issue as several fixes during P7.5,
+  resolved the same way (explicit `.first()`/scoping); (3) at desktop
+  width there are genuinely **two** "Leave voice" buttons in the DOM
+  simultaneously — `VoiceMiniBar`'s (present but `lg:hidden`, i.e. not
+  removed, just invisible) and the persistent `lg:` pane's own — an
+  unscoped locator's `.first()` picked the hidden one and hung forever
+  waiting for it to become clickable; fixed with Playwright's `:visible`
+  selector pseudo-class rather than guessing DOM order.
+
+  **Everything else — genuinely deferred, not just automated-and-glossed-
+  over**: iOS phone Safari (P0, the single highest-risk platform per the
+  PRD's own wording), desktop Firefox (P1), macOS Safari (P1), Android
+  tablet/iPad (P2). Wrote a concrete checklist for these rather than a
+  vague "please test on real devices" — per-platform core path (connect →
+  channels → chat → voice → DM → admin) plus the specific platform
+  constraints already documented in this repo's own CLAUDE.md (no
+  `beforeinstallprompt` on iOS, no `setSinkId` on Firefox, autoplay
+  restrictions on both Safari variants) so the user knows which behaviors
+  are expected platform gaps versus genuine bugs worth reporting, plus an
+  explicit call-out to specifically re-confirm this session's three bug
+  fixes hold on real hardware (the channel-tree race in particular was
+  only ever reproduced via a real-device report in the first place, so
+  real-device re-verification is the only fully conclusive check for it).
+
+  Edge Cases Handled:
+    None new to the app itself this entry — this was a verification pass,
+    not a code-change pass, aside from the test-script robustness fixes
+    described above (which live in the scratch sweep script only, not
+    committed, consistent with how every mock-server-dependent
+    verification script has been handled all session).
+
+  Key Files Modified:
+    app-planning/P7.7-real-device-checklist.md (NEW)
+
+  Verification:
+    22/22 automated Chromium-engine checks pass (Desktop Chrome + Pixel 7
+    profiles, 11 checks each) against the scratch mock server. Explicitly
+    NOT verified this session: iOS Safari, macOS Safari, desktop Firefox,
+    tablet breakpoints, or anything on genuine physical hardware — these
+    remain open until the user's own real-device pass comes back, at which
+    point results get folded into a follow-up progress.txt entry and
+    P7.7's acceptance criterion ("full device matrix... with results
+    recorded, not just 'should work' reasoning") gets properly closed out.
+
+  Next Step: Await real-device results from the user (per
+  P7.7-real-device-checklist.md), fold them into progress.txt, then
+  P7.8 — Deployment.
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.7: Cross-device/cross-browser testing matrix
+(real-device results)
+
+  Problem: The automated-portion entry above left the four platforms this
+  sandbox genuinely cannot exercise (iOS Safari, macOS Safari, desktop
+  Firefox, Android/iPad tablet) open, pending the user's own real-device
+  pass against `app-planning/P7.7-real-device-checklist.md`.
+
+  Solution: User confirmed a real-device pass covering iOS Safari (P0),
+  macOS Safari (P1), desktop Firefox (P1), and Android phone Chrome
+  ("mobile" — re-confirming the P0 row their original Bug 1/Bug 2 reports
+  came from, this time against the fixed `v6.1.0` build) — all passing per
+  the checklist's core path, with no specifics reported as failing. This
+  covers every P0 row and every P1 row in the phase PRD's matrix table.
+
+  Not covered: the P2 row (Android tablet / iPad, validating the `md:`
+  two-pane breakpoint specifically) — lowest priority in the PRD's own
+  table, left as a genuinely open, acknowledged gap rather than assumed
+  fine. Revisit if a tablet becomes available, but not blocking the rest
+  of Phase 7.
+
+  Verification:
+    User-reported, real hardware, against the actual checklist — not this
+    session's own claim. Per this project's own honesty discipline, noting
+    explicitly that the *specific* per-checkbox detail (e.g. did the iOS
+    install-panel wording show correctly, did Firefox's setSinkId
+    degradation look right) wasn't itemized back — "all passing" was the
+    report, not a line-by-line transcript. If anything platform-specific
+    turns out to be subtly off later, that would only surface on closer
+    inspection than this pass gave it.
+
+  Next Step: P7.8 — Deployment (hosting decision, HTTPS/WSS documentation,
+  CSP configuration).
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.8: Deployment (hosting decision, HTTPS/WSS,
+CSP configuration)
+
+  Problem: This phase item is "decide and document," not build a feature —
+  master PRD §5.6 explicitly defers CSP configuration to this exact task,
+  and the phase PRD asks for a static-host-vs-Docker decision plus written
+  HTTPS/WSS/CSP guidance, accounting for the fact that this client has no
+  backend of its own and connects to a variable, user-supplied server
+  origin at runtime.
+
+  Solution: Read `../reson8`'s actual deployment shape first rather than
+  guessing — its `docker-compose.yml` runs the server on plain HTTP/WS
+  (port 9800, no self-terminated TLS), and `docker-compose.cloudflared.yml`
+  is that repo's own established pattern for optional add-on services via
+  a compose override, plus its documented way of putting TLS in front of
+  the server (Cloudflare Tunnel). Both facts shaped this client's own
+  deployment story rather than inventing a different convention.
+
+  **Decision**: static-host + CDN as the recommended default (Netlify/
+  Vercel/Cloudflare Pages/plain nginx — this app has nothing to run
+  server-side, matching the PRD's own framing), with a working Docker
+  option documented alongside it for self-hosters who want the web client
+  running next to their `reson8` server, using the same compose-override
+  pattern that repo already established. Wrote `DEPLOYMENT.md` covering
+  both, plus a `Dockerfile` (multi-stage: `node:22-bookworm-slim` build →
+  `nginx:1.27-alpine` runtime) and `nginx.conf` for the Docker path — the
+  same nginx config also serves as the concrete reference for what a
+  static-host operator needs to replicate via their own host's custom-
+  headers mechanism (Netlify `_headers`, Vercel `vercel.json`, etc.).
+
+  Real nginx bug caught and fixed before considering this done: initially
+  set the CSP/security headers once at the server block level, then added
+  per-location `Cache-Control` overrides for hashed assets vs. `sw.js`/
+  `manifest.webmanifest`/`index.html` (each needing different caching
+  rules). nginx's `add_header` inheritance is not additive — a location
+  block that defines *any* `add_header` of its own silently drops every
+  server-level `add_header` for that location, rather than merging with
+  them. That would have meant the CSP never actually reached `index.html`
+  (the one response it matters most for) or any static asset response —
+  only the un-touched default `location /` block would have gotten it.
+  Fixed by defining the CSP string once via `set $csp` (which *does*
+  inherit normally into locations) and repeating the four `add_header`
+  calls explicitly in every location block that sets its own
+  Cache-Control, with a comment explaining why the repetition is
+  necessary rather than looking like copy-paste oversight.
+
+  **HTTPS**: documented as mandatory (getUserMedia/service-worker/Badging-
+  API secure-context restrictions, `localhost`'s dev-only exception) — no
+  code change needed, this is pure documentation of an existing browser-
+  level constraint.
+
+  **WSS**: confirmed `src/lib/serverUrl.ts`'s existing `normalizeServerUrl()`
+  already defaults correctly (prepends `wss://` unless the host is
+  clearly local) — no code change needed here either, just documented the
+  existing correct behavior and the practical backstop (a browser blocks
+  mixed active content regardless, once this app itself is served over
+  HTTPS).
+
+  **CSP tradeoff**: per master PRD §5.6's explicit instruction not to ship
+  a silent wildcard, `DEPLOYMENT.md` spells out *why* `connect-src`/
+  `img-src` allow any host over `https:`/`wss:` rather than a single
+  origin (this app's entire purpose is connecting to whatever server the
+  user types in) and what that does and doesn't protect against (still
+  blocks plain-HTTP downgrade and `javascript:`/`data:`-scheme injection;
+  does not and cannot protect a user who deliberately connects to a
+  malicious server of their own choosing from that server's own responses
+  — inherent to the app's trust model, not a CSP gap).
+
+  Edge Cases Handled:
+    `style-src 'unsafe-inline'` is required specifically because Radix
+    UI's popper positioning sets inline `style` attributes on floating
+    content (popovers/dropdowns) — documented as the actual reason rather
+    than a blanket "just in case" allowance, so a future session doesn't
+    mistake it for laziness and remove it.
+
+  Key Files Modified:
+    DEPLOYMENT.md (NEW) — full hosting decision + HTTPS/WSS/CSP writeup
+    Dockerfile (NEW)
+    nginx.conf (NEW)
+    .dockerignore (NEW)
+
+  Verification:
+    npm run typecheck / lint / test (33/33) / build / check:bundle-size
+    (132.5KB gzip, unchanged) all pass — confirmed `dist/`'s actual output
+    shape (`assets/`, `index.html`, `sw.js`, `manifest.webmanifest` all at
+    the root) matches exactly what `nginx.conf`'s location blocks expect.
+
+    **Not verified**: the Docker image itself was never actually built —
+    no Docker daemon exists in this sandbox at all. Separately, and worth
+    recording for any future session doing similar work here: `npm ci`
+    (the exact command the Dockerfile's build stage runs) reliably fails
+    in this specific proot sandbox with `ENOENT`/rename errors against
+    both the existing npm cache and a freshly-created one, while plain
+    `npm install` against the identical `package-lock.json` succeeds
+    cleanly every time — this reproduced consistently enough (four
+    attempts, two different cache directories) to be confident it's a
+    proot/ptrace-layer filesystem limitation specific to `npm ci`'s more
+    aggressive parallel extraction, not a real problem with this
+    repository's lockfile or the Dockerfile's correctness. A real Docker
+    build (standard Linux container, no ptrace interception) would not
+    have this specific limitation, but this is still a genuine, not-fully-
+    closed verification gap on the one thing that would most concretely
+    prove the Docker path works — flag this explicitly if picking this
+    back up rather than assuming the untested Dockerfile is proven.
+
+  Next Step: P7.9 — Project documentation (README.md/CLAUDE.md rewrite for
+  future contributors, now genuinely due — README.md's "Status: Phase 1
+  complete" line has been stale since roughly Phase 2).
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.9: Project documentation (README.md/CLAUDE.md)
+
+  Problem: The phase PRD's explicit checklist for this item — setup/dev
+  commands, architecture summary, the vendored-protocol-types sync
+  process, a pointer back to `app-planning/` as the authoritative spec —
+  was already almost entirely satisfied by `CLAUDE.md`, which was written
+  self-sufficient from Phase 1 onward. What was actually stale: its
+  "Current status: Phase 1 in progress" line had never been updated across
+  six subsequent phases, its wire-protocol section still described the
+  vendored types as a Phase 1 future-tense TODO ("until Phase 1 vendors
+  the real type files") despite that having shipped six phases ago, and
+  its progress.txt description still said "the file currently just holds
+  the format header" when that file has since grown into this project's
+  primary build record. `README.md` was worse off — a single "Status:
+  Phase 1 complete (foundation...)" line, no deployment section (P7.8 had
+  just added one), and dev-command coverage missing `format` and
+  `check:bundle-size` (both added since the README was last touched).
+
+  Solution: Targeted staleness fixes to `CLAUDE.md` rather than a full
+  rewrite — it didn't need one, it needed to stop contradicting its own
+  content. Updated the status line to accurately reflect Phase 7's actual
+  state (P7.1–P7.8 done, P7.9 wrapping up, explicitly flagging the P7.7
+  tablet-row gap so nobody assumes full device-matrix coverage from a
+  stale summary), corrected the wire-protocol section's tense now that
+  the vendored types genuinely are the shipped source of truth, fixed the
+  progress.txt description, added `scripts/`, the `pwa` feature directory,
+  and the root-level `Dockerfile`/`nginx.conf` to the architecture tree,
+  and added a one-line pointer to `DEPLOYMENT.md`.
+
+  `README.md` got a fuller pass, since it actually needed one: a status
+  paragraph naming what Phase 7 shipped (not just "complete"/"in
+  progress"), a "Quick start" section ahead of the full dev-commands list
+  (the two were previously merged, which buried the actual "how do I run
+  this" answer), the full current command list, a Deployment section
+  pointing at `DEPLOYMENT.md`, and an explicit closing note that
+  `app-planning/progress.txt` is the authoritative record and any status
+  summary (this README's included) can lag behind it — the same lesson
+  this exact entry is a response to.
+
+  Deliberately did not add: a LICENSE section (neither this repo nor
+  `../reson8` has established one — not this phase item's call to invent),
+  or duplicating `CLAUDE.md`'s architecture tree/wire-protocol tables
+  verbatim into the README (kept the two documents' roles distinct —
+  README as the human quick-start/status front door, CLAUDE.md as the
+  deep technical reference — rather than letting the same content drift
+  out of sync in two places).
+
+  Key Files Modified:
+    CLAUDE.md — status line, wire-protocol section tense, progress.txt
+      description, architecture tree, DEPLOYMENT.md pointer
+    README.md — full rewrite (status, quick start, dev commands,
+      deployment section, planning-docs section)
+
+  Verification:
+    npm run typecheck / lint pass (documentation-only change; full
+    test/build suite not re-run since nothing under src/ changed — the
+    P7.8 entry immediately prior already confirmed test/build/bundle-size
+    all green against the current source tree).
+
+  Next Step: Phase 7's own acceptance criteria are all met except the
+  P7.7 device matrix's Android tablet/iPad (P2) row — revisit
+  `/bump-version` for the phase's MAJOR bump once that's closed, or
+  explicitly decided as an accepted, permanently-open gap.
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.7: real-device results, Android tablet + iPad
+(closes the last open matrix row)
+
+  Problem: Every row in the P7.7 device matrix had real-device
+  confirmation except the P2 Android-tablet/iPad row — the last item
+  blocking Phase 7's acceptance criteria from being fully met.
+
+  Solution: User confirmed a real-device pass on both an Android tablet
+  and an iPad, both passing — specifically validating the `md:` two-pane
+  breakpoint composition (collapsible channel drawer + content pane) this
+  row exists to check, per `app-planning/P7.7-real-device-checklist.md`'s
+  own stated purpose for it. This closes the full P7.7 device matrix: every
+  P0/P1/P2 row now has real-hardware confirmation, not just emulation.
+
+  With this, every acceptance criterion in the Phase 7 PRD's closing
+  section is met: installability verified on real Android Chrome/iOS
+  Safari, the update-flow + What's New modal built and verified (P7.2/
+  P7.3), zero axe-core violations (P7.5), Lighthouse targets met (P7.6),
+  the full real-device matrix exercised end-to-end (P7.7, now complete),
+  and HTTPS/WSS/CSP documented (P7.8). Phase 7 is complete.
+
+  Verification:
+    User-reported, real hardware — same reporting granularity as the
+    earlier P0/P1 real-device entry (pass/fail per platform, not an
+    itemized per-checkbox transcript).
+
+  Next Step: Phase 7 complete. `/bump-version` for the MAJOR bump (new
+  capabilities shipped throughout: installability, service-worker update
+  flow, "What's New" modal, Badging/Vibration lifecycle) — see the
+  version-bump marker immediately following this entry.
+
+=== Version bumped to 7.0.0 (18/08/2026) — classification: MAJOR ===

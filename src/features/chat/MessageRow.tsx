@@ -155,12 +155,16 @@ export function MessageRow({ message, isPinned }: { message: IMessage; isPinned:
       </div>
 
       <div className={cn("shrink-0 opacity-70 group-hover:opacity-100", menuOpen && "opacity-100")}>
+        {/* modal=false: a small kebab menu, not a page-blocking dialog — see
+            ChannelActionsMenu's identical comment for why (axe
+            aria-hidden-focus/landmark-one-main/page-has-heading-one). */}
         <DropdownMenu
           open={menuOpen}
           onOpenChange={(open) => {
             setMenuOpen(open);
             if (open) setWithinEditWindow(Date.now() - new Date(message.createdAt).getTime() < EDIT_WINDOW_MS);
           }}
+          modal={false}
         >
           <DropdownMenuTrigger asChild>
             <button

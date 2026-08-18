@@ -26,6 +26,7 @@ function VolumeRow({
         </span>
       </div>
       <Slider
+        aria-label={label}
         value={[value]}
         max={max}
         step={step}

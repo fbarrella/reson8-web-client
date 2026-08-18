@@ -97,7 +97,10 @@ export function DmMessageRow({ message, isLastOwn }: { message: IDirectMessage; 
 
       {isOwn && (
         <div className={cn("shrink-0 opacity-70 group-hover:opacity-100", menuOpen && "opacity-100")}>
-          <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+          {/* modal=false: a small kebab menu, not a page-blocking dialog — see
+              ChannelActionsMenu's identical comment for why (axe
+              aria-hidden-focus/landmark-one-main/page-has-heading-one). */}
+          <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"

@@ -40,7 +40,7 @@ export function OccupantActionsPopover({
           <MoreVertical className="size-4" />
         </button>
       </PopoverTrigger>
-      <PopoverContent onClick={(e) => e.stopPropagation()}>
+      <PopoverContent aria-label={`Actions for ${nickname}`} onClick={(e) => e.stopPropagation()}>
         <p className="mb-3 truncate text-sm font-medium text-foreground">{nickname}</p>
 
         <div className="mb-3">
@@ -49,6 +49,7 @@ export function OccupantActionsPopover({
             <span className="text-xs text-muted-foreground">{override.volumePercent}%</span>
           </div>
           <Slider
+            aria-label={`Volume for ${nickname}`}
             value={[override.volumePercent]}
             max={200}
             step={5}

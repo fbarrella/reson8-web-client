@@ -6,9 +6,9 @@ Guidance for Claude Code (or any agent) working in this repository. This file is
 
 Reson8 Web Client is a **mobile-first, fully responsive Progressive Web App** client for Reson8 — a self-hosted voice & text communication server (TeamSpeak-3-style: hierarchical channel tree, SFU voice via mediasoup, persistent text chat, DMs, moderation). Built with React + TypeScript + Vite.
 
-**Current status: Phase 1 in progress.** Read `app-planning/00-master-prd.md` first, then the phase PRD (`app-planning/0N-phase*.md`) relevant to the work at hand, before writing any code. The phase PRDs are sequential and each depends on the ones before it (see the master PRD's Phase Map).
+**Current status: Phase 7 (PWA platform polish & launch hardening) complete.** All seven phases are done — foundation, voice, advanced voice/channel management, text chat, DMs/social, admin/moderation, and PWA platform polish (installability, update flow, "What's New" modal, zero-violations accessibility gate, Lighthouse-verified performance budget, a full real-device cross-browser/cross-device matrix, deployment docs, and this documentation pass). This is a launch-ready client. Read `app-planning/00-master-prd.md` first, then the relevant phase PRD (`app-planning/0N-phase*.md`) before writing any new code — the PRDs remain the authoritative scope document for any future work, even post-launch. **Always check `app-planning/progress.txt`'s most recent entries before starting new work** — it's the authoritative record of what's actually been built and verified, and is kept current far more reliably than any status line in this file.
 
-**Current version: 6.0.0** (Phase 6 complete — MAJOR bump per the policy below, since the phase shipped new capabilities throughout) — see "Versioning" below. Keep this line current as `/bump-version` runs (that's the whole point of it).
+**Current version: 7.0.0** (Phase 7 complete — MAJOR bump per the policy below, since the phase shipped new capabilities throughout) — see "Versioning" below. Keep this line current as `/bump-version` runs (that's the whole point of it).
 
 This project is **client-only**: it never modifies the `reson8` server, its database schema, or its Socket.io protocol. Confirmed non-goals (see master PRD §7): no server-side changes, no background push notifications, no native app-store wrapper, no offline message queue.
 
@@ -25,6 +25,9 @@ Scaffolded in Phase 1 (P1.1): Vite + React + TS strict + ESLint flat config + Pr
 - `npm run test` — Vitest (unit/component, jsdom)
 - `npm run test:watch` — Vitest in watch mode
 - `npm run test:e2e` — Playwright (multi-browser incl. mobile viewport emulation, config in `playwright.config.ts`)
+- `npm run check:bundle-size` — verifies the connect-screen's initial JS payload against the P7.6 performance budget (160KB gzipped); run after `npm run build`
+
+See `DEPLOYMENT.md` for hosting options (static host vs. the `Dockerfile`/`nginx.conf` containerized path), the mandatory-HTTPS/WSS requirements, and CSP configuration (P7.8).
 
 ## Architecture (target — see master PRD §4 for the full diagram)
 
@@ -32,16 +35,18 @@ Scaffolded in Phase 1 (P1.1): Vite + React + TS strict + ESLint flat config + Pr
 reson8-web-client/
 ├── app-planning/          # PRDs — the authoritative feature/scope spec
 ├── public/                 # manifest, icons, sound assets
+├── scripts/                 # check-bundle-size.mjs (P7.6 performance budget)
 ├── src/
 │   ├── app/                # routing shell, mobile-first layout composition
 │   ├── components/          # shadcn/ui primitives (Radix-based)
-│   ├── features/             # connection, channels, voice, chat, emoji, dm, admin, settings
+│   ├── features/             # connection, channels, voice, chat, emoji, dm, admin, settings, pwa
 │   ├── stores/                 # Zustand stores
 │   ├── services/                 # socket client, voiceService (mediasoup-client), uploadService
 │   ├── types/reson8-protocol/      # vendored snapshot of the server's shared-types (see below)
 │   ├── hooks/
 │   └── lib/                          # sound alerts, formatting, sanitization
 ├── e2e/                                 # Playwright specs
+├── Dockerfile, nginx.conf                # containerized deployment option — see DEPLOYMENT.md
 └── vite.config.ts
 ```
 
@@ -49,7 +54,7 @@ Tech stack decisions (React, Vite, Zustand, Tailwind + shadcn/ui, socket.io-clie
 
 ## The Reson8 Wire Protocol (frozen external contract)
 
-This is the actual, current contract exposed by the `reson8` server as of the audit that informed this project's PRDs. **This section is the canonical reference for this repo until Phase 1 vendors the real type files into `src/types/reson8-protocol/`** (master PRD §3.1) — once that exists, the vendored `.ts` files are the source of truth for exact TypeScript shapes, and this section becomes a human-readable mirror. If the two ever disagree, the vendored files win, and this section should be corrected to match (open a note in this file's own history/PR description when that happens — don't let it silently drift).
+This is the actual contract exposed by the `reson8` server as of the audit that informed this project's PRDs. `src/types/reson8-protocol/` (vendored in Phase 1, per master PRD §3.1) is the source of truth for exact TypeScript shapes — this section is a human-readable mirror of it. If the two ever disagree, the vendored files win, and this section should be corrected to match (note why in the fixing commit/PR — don't let it silently drift).
 
 Server default port: `9800` (Fastify + Socket.io). Media (mediasoup): UDP/TCP `10000–10100`. All events are Socket.io events (not raw WebSocket messages) — most client→server events are **ack-based** (a callback/Promise resolves with `{success, ...}` or `{success: false, error}`), not fire-and-forget.
 
@@ -161,11 +166,11 @@ Full parity ledger (every desktop feature, one row each, disposition + owning ph
 - **Audio autoplay**: browsers block audio until a user gesture occurs on the page. `SoundAlert`'s `AudioContext`/`<audio>` elements must be lazily created/resumed on first user interaction, not at module load — see Phase 1 P1.11.
 - **Never `dangerouslySetInnerHTML` on remote/user content** (release notes, message text, link-preview data) — render as text or through a strict allowlist sanitizer. This mirrors a deliberate security choice already validated in the desktop client (its "What's New" modal renders GitHub release notes via `textContent`, never parsed Markdown) — apply the same discipline everywhere in this client, not just that one surface (master PRD §5.6).
 - **Remote audio playback**: attach every consumed mediasoup track to a `document.createElement("audio")` element appended to the DOM — a detached `new Audio()` produces no sound (bit the desktop client once) and mobile Safari's autoplay/media-element policies are even stricter, so this matters more here, not less.
-- **Vendored protocol types**: once Phase 1 creates `src/types/reson8-protocol/`, each copied file carries a header comment recording its source path and the `reson8` repo's version/commit at copy time. Re-sync manually when the desktop repo's `packages/shared-types` changes in a way that affects the wire contract — there is no build-time coupling between the two repos.
+- **Vendored protocol types**: `src/types/reson8-protocol/` (created in Phase 1) is a vendored snapshot, not a live dependency — each copied file carries a header comment recording its source path and the `reson8` repo's version/commit at copy time. Re-sync manually when the desktop repo's `packages/shared-types` changes in a way that affects the wire contract — there is no build-time coupling between the two repos, so a server-side protocol change never automatically reaches this client.
 
 ## Project history and required practice
 
-`app-planning/progress.txt` is this repo's build log, in the same entry format `../reson8/app-planning/progress.txt` established (`--- Entry: DD/MM/YYYY ---`, Problem/Solution/Key Files Modified/Verification/Next Step). **This is default behavior for every phase, not an optional nicety**: use `/log-progress` to append an entry for each PRD item as it's completed — task-by-task, as the work happens, not batched at the end of a phase (master PRD §10.1). The file currently just holds the format header; the first real entry should be Phase 1's initial scaffold.
+`app-planning/progress.txt` is this repo's build log, in the same entry format `../reson8/app-planning/progress.txt` established (`--- Entry: DD/MM/YYYY ---`, Problem/Solution/Key Files Modified/Verification/Next Step). **This is default behavior for every phase, not an optional nicety**: use `/log-progress` to append an entry for each PRD item as it's completed — task-by-task, as the work happens, not batched at the end of a phase (master PRD §10.1). By Phase 7 this file has grown into the single most reliable source of "what's actually been built and verified" in this repo — read its most recent entries before starting new work, not just this file's own necessarily-lagging summaries.
 
 The PRDs under `app-planning/` are the authoritative scope document — if an implementation decision seems to conflict with a PRD, treat that as a signal to update the PRD deliberately (and note why) rather than silently drifting from it.
 

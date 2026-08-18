@@ -41,16 +41,22 @@ export function BottomTabBar() {
           <span className="relative">
             <Icon className="size-5" />
             {to === "/app/chat" && hasUnread && (
-              <span
-                aria-label="Unread"
-                className="absolute -top-0.5 -right-1 size-2 rounded-full bg-primary ring-2 ring-card"
-              />
+              <>
+                <span
+                  aria-hidden="true"
+                  className="absolute -top-0.5 -right-1 size-2 rounded-full bg-primary ring-2 ring-card"
+                />
+                <span className="sr-only">Unread</span>
+              </>
             )}
             {to === "/app/dms" && hasUnreadDms && (
-              <span
-                aria-label="Unread"
-                className="absolute -top-0.5 -right-1 size-2 rounded-full bg-primary ring-2 ring-card"
-              />
+              <>
+                <span
+                  aria-hidden="true"
+                  className="absolute -top-0.5 -right-1 size-2 rounded-full bg-primary ring-2 ring-card"
+                />
+                <span className="sr-only">Unread</span>
+              </>
             )}
           </span>
           {label}

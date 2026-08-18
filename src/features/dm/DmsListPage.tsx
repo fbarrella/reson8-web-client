@@ -48,9 +48,10 @@ export function DmsListPage() {
                   className="flex min-h-11 w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-accent"
                 >
                   <span
-                    aria-label={partner.isOnline ? "Online" : "Offline"}
+                    aria-hidden="true"
                     className={`size-2 shrink-0 rounded-full ${partner.isOnline ? "bg-success" : "bg-muted-foreground/40"}`}
                   />
+                  <span className="sr-only">{partner.isOnline ? "Online" : "Offline"}</span>
                   <span className="flex-1 truncate">{partner.nickname}</span>
                   {partner.unreadCount > 0 && (
                     <span className="flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">

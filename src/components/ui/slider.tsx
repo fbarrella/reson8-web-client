@@ -3,7 +3,11 @@ import * as SliderPrimitive from "@radix-ui/react-slider";
 
 import { cn } from "@/lib/utils";
 
-function Slider({ className, ...props }: React.ComponentProps<typeof SliderPrimitive.Root>) {
+function Slider({
+  className,
+  "aria-label": ariaLabel,
+  ...props
+}: React.ComponentProps<typeof SliderPrimitive.Root> & { "aria-label"?: string }) {
   const values = props.value ?? props.defaultValue ?? [0];
   return (
     <SliderPrimitive.Root
@@ -19,6 +23,7 @@ function Slider({ className, ...props }: React.ComponentProps<typeof SliderPrimi
       {values.map((_, i) => (
         <SliderPrimitive.Thumb
           key={i}
+          aria-label={ariaLabel}
           className="block size-5 shrink-0 rounded-full border-2 border-primary bg-background shadow-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
         />
       ))}

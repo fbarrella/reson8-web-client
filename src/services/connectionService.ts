@@ -61,6 +61,36 @@ function currentUnreadDmTotal(): number {
 }
 
 /**
+ * Whether a Nudge has been received but not yet "acknowledged". The
+ * protocol has no per-nudge read receipt (unlike DMs' MARK_DMS_READ), so
+ * the tab regaining focus is treated as acknowledging it — matching the
+ * PRD's "cleared ... when the tab regains focus" rule for anything that
+ * doesn't have its own explicit read state. Module-level rather than store
+ * state: this is Badging-API bookkeeping, not app-visible UI state.
+ */
+let hasPendingNudgeBadge = false;
+
+/**
+ * Keeps the OS-level app-icon badge in sync with the true combined unread
+ * total (Phase 7 PRD P7.4) — every call site that changes what's unread
+ * should go through this rather than setAppBadge/clearAppBadge directly,
+ * so the badge can't drift from reality in either direction: stuck at a
+ * stale nonzero count, *or* wrongly cleared to zero while something is
+ * still genuinely unread. Only touches the icon while backgrounded — the
+ * in-app UI (unread dots, DM list) already communicates unread state while
+ * the tab is focused, matching Phase 5's original design.
+ */
+function pushAppBadgeIfBackgrounded(): void {
+  if (document.visibilityState === "visible") return;
+  const total = currentUnreadDmTotal() + (hasPendingNudgeBadge ? 1 : 0);
+  if (total > 0) {
+    setAppBadge(total);
+  } else {
+    clearAppBadge();
+  }
+}
+
+/**
  * GET_UNREAD_DM_PARTNERS hydration (Phase 5 PRD P5.2): populates the DMs
  * tab list + badge on every platform, and additionally auto-navigates on
  * mobile when there's exactly one unread partner (desktop instead just
@@ -181,7 +211,7 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
     if (partnerId !== activePartnerId) {
       useDmStore.getState().markPartnerUnread(partnerId, partnerNickname);
       soundAlert.play("hey_wake_up");
-      if (document.visibilityState !== "visible") setAppBadge(currentUnreadDmTotal());
+      pushAppBadgeIfBackgrounded();
     } else {
       // The partner is clearly active right now — a good opportunistic
       // moment to pick up any read-receipt change on our own sent messages
@@ -196,7 +226,8 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
     toast({ title: "Nudge!", description: `${payload.fromNickname} nudged you.` });
     soundAlert.play("nudge", "nudge");
     vibrate([200, 100, 200]);
-    if (document.visibilityState !== "visible") setAppBadge(Math.max(currentUnreadDmTotal(), 1));
+    hasPendingNudgeBadge = true;
+    pushAppBadgeIfBackgrounded();
   };
   const handleServerSettingsUpdated: ServerToClientEvents["SERVER_SETTINGS_UPDATED"] = (payload) => {
     useServerSettingsStore.getState().setNudgeEnabled(payload.nudgeEnabled);
@@ -220,11 +251,26 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
   const handleUserBanned: ServerToClientEvents["USER_BANNED"] = () => {
     useConnectionStore.getState().setError("You have been banned from this server.");
   };
+  // The server's `requirePermission` middleware (confirmed against
+  // ../reson8/apps/server/src/middleware/permissions.middleware.ts — the
+  // *only* place this app's server ever emits ERROR) always fires this
+  // broadcast in addition to, never instead of, failing the ack of
+  // whichever specific event triggered it. Every real user-initiated
+  // blocked action already surfaces its own toast via `reportAckError` at
+  // the call site that made that ack (channelService/adminService/
+  // chatService/emojiService/dmService), so toasting this broadcast too
+  // would just double the same message. Worse, `refreshPermissions()` runs
+  // automatically on every connect and deliberately treats its own
+  // GET_ALL_USERS ack failure as "no elevated permissions" — a normal,
+  // silent outcome for any non-admin — but the server still fires this
+  // broadcast for that exact denial, which used to reflexively play the
+  // insufficient_perms sound + toast for every ordinary member on every
+  // connect, regardless of whether they'd tried to do anything at all.
   const handleError: ServerToClientEvents["ERROR"] = (payload) => {
-    toast({ title: "Server error", description: payload.message, variant: "destructive" });
     if (isPermissionDeniedMessage(payload.code) || isPermissionDeniedMessage(payload.message)) {
-      soundAlert.play("insufficient_perms");
+      return;
     }
+    toast({ title: "Server error", description: payload.message, variant: "destructive" });
   };
   const handleDisconnect = (reason: string) => {
     if (reason === "io client disconnect") return;
@@ -258,7 +304,12 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
           if (res.success && res.emojis) useCustomEmojiStore.getState().setApprovedList(res.emojis);
         });
         void fetchServerSettings();
-        void hydrateUnreadDmPartners();
+        // Re-syncs the badge to the freshly-hydrated server truth, not just
+        // this in-memory session's own DM-received events — otherwise an
+        // outage that spanned other unread activity (another device, a
+        // message the server already knows about) could leave the icon
+        // showing a stale total after reconnect.
+        void hydrateUnreadDmPartners().then(() => pushAppBadgeIfBackgrounded());
       });
   };
   const handleReconnectFailed = () => {
@@ -267,7 +318,16 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
   const handleVisibilityChange = () => {
     if (document.visibilityState === "visible") {
       voiceConnectionService.rejoinVoiceIfConnectionLost();
-      clearAppBadge();
+      // Regaining focus acknowledges any pending nudge, but must NOT blindly
+      // wipe the badge if DMs are still genuinely unread — a stale-cleared
+      // badge is just as wrong as a stale-nonzero one (Phase 7 PRD P7.4).
+      hasPendingNudgeBadge = false;
+      const remainingUnread = currentUnreadDmTotal();
+      if (remainingUnread > 0) {
+        setAppBadge(remainingUnread);
+      } else {
+        clearAppBadge();
+      }
     }
   };
 
@@ -370,17 +430,29 @@ export function connectToServer(params: ConnectParams): Promise<ConnectResult> {
 
     const onConnect = () => {
       socket.off("connect_error", onConnectError);
+      // Attach every lifecycle listener (including CHANNEL_TREE_UPDATE)
+      // BEFORE sending USER_JOIN_SERVER, not after its ack resolves. The
+      // server sends CHANNEL_TREE_UPDATE and then the join ack as two
+      // separate packets over the same connection — on a real network
+      // (unlike this repo's own always-fast local mock server) the tree
+      // event can be dispatched before the ack promise's `.then()` callback
+      // even runs, and with no listener attached yet it was silently
+      // dropped: the channel tree stayed permanently empty for that
+      // session. Attaching first means no server-emitted event, for this
+      // one or any other, can ever be missed regardless of packet timing.
+      cleanupLifecycle = attachLifecycleListeners(socket, params);
       void socketService
         .joinServer({ nickname, instanceId, password: password || undefined })
         .then((ack) => {
           if (!ack.success) {
             const message = resolveJoinErrorMessage(ack.error, password);
             useConnectionStore.getState().setError(message);
+            cleanupLifecycle?.();
+            cleanupLifecycle = null;
             socketService.disconnect();
             resolve({ success: false, error: message });
             return;
           }
-          cleanupLifecycle = attachLifecycleListeners(socket, params);
           useConnectionStore.getState().setConnected(ack.serverId ?? "", nickname, serverUrl);
           soundAlert.play("connected");
           void refreshPermissions();
@@ -388,7 +460,7 @@ export function connectToServer(params: ConnectParams): Promise<ConnectResult> {
             if (res.success && res.emojis) useCustomEmojiStore.getState().setApprovedList(res.emojis);
           });
           void fetchServerSettings();
-          void hydrateUnreadDmPartners();
+          void hydrateUnreadDmPartners().then(() => pushAppBadgeIfBackgrounded());
           resolve({ success: true });
         });
     };
@@ -414,4 +486,5 @@ export function leaveServer(): void {
   useServerSettingsStore.getState().reset();
   useAdminStore.getState().reset();
   clearAppBadge();
+  hasPendingNudgeBadge = false;
 }

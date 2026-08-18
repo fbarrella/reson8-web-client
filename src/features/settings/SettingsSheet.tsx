@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 
 import { useUiStore } from "@/stores/uiStore";
@@ -10,9 +10,18 @@ import { AboutTab } from "@/features/settings/AboutTab";
 import { ApplicationTab } from "@/features/settings/ApplicationTab";
 import { VoiceShortcutsTab } from "@/features/settings/VoiceShortcutsTab";
 import { AudioTab } from "@/features/settings/AudioTab";
-import { RolesTab } from "@/features/admin/RolesTab";
-import { EmojiApprovalTab } from "@/features/admin/EmojiApprovalTab";
-import { ServerSettingsTab } from "@/features/admin/ServerSettingsTab";
+
+// Admin-only surfaces (P7.6: code splitting) — most connected users never
+// hold MANAGE_ROLES/MANAGE_EMOJIS/BAN_USER/ADMIN, and even for the ones who
+// do, this content shouldn't load until Settings is open on that specific
+// tab.
+const RolesTab = lazy(() => import("@/features/admin/RolesTab").then((m) => ({ default: m.RolesTab })));
+const EmojiApprovalTab = lazy(() =>
+  import("@/features/admin/EmojiApprovalTab").then((m) => ({ default: m.EmojiApprovalTab })),
+);
+const ServerSettingsTab = lazy(() =>
+  import("@/features/admin/ServerSettingsTab").then((m) => ({ default: m.ServerSettingsTab })),
+);
 
 const ALL_TABS = [
   { id: "roles", label: "Roles" },
@@ -123,12 +132,22 @@ export function SettingsSheet() {
           <div role="tabpanel" className="min-h-0 flex-1 overflow-y-auto p-4">
             {activeTab === "about" && <AboutTab />}
             {activeTab === "application" && <ApplicationTab />}
-            {activeTab === "roles" && canManageRoles && <RolesTab />}
-            {activeTab === "emojis" && canManageEmojis && <EmojiApprovalTab />}
+            {activeTab === "roles" && canManageRoles && (
+              <Suspense fallback={null}>
+                <RolesTab />
+              </Suspense>
+            )}
+            {activeTab === "emojis" && canManageEmojis && (
+              <Suspense fallback={null}>
+                <EmojiApprovalTab />
+              </Suspense>
+            )}
             {activeTab === "server" &&
               canSeeServerTab &&
               (status === "connected" ? (
-                <ServerSettingsTab />
+                <Suspense fallback={null}>
+                  <ServerSettingsTab />
+                </Suspense>
               ) : (
                 <p className="text-sm text-muted-foreground">Connect to a server to manage this.</p>
               ))}

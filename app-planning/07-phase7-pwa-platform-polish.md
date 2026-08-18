@@ -44,6 +44,18 @@ Full `axe-core`-driven audit (automated, via Playwright + `@axe-core/playwright`
 **P7.6 — Performance budget**
 Lighthouse CI (or equivalent) run against a production build, targeting: Performance ≥ 90, PWA installability = pass, Accessibility ≥ 95 (backstopping P7.5's zero-violations gate with a holistic score), Best Practices ≥ 95. Concrete tactics: route-based code splitting (React Router's lazy route loading — e.g. the admin/settings surfaces need not be in the initial bundle), the ~552-entry emoji dataset and custom-emoji crop tooling deferred/lazy-loaded rather than bundled into the initial connect-screen load, image/icon assets appropriately sized and compressed. Bundle-size budget (a specific number, e.g. initial JS ≤ 250KB gzipped) to be set once Phase 1's baseline scaffold gives a real starting measurement — don't guess a number now with zero code written.
 
+**Bundle-size budget, set at P7.6 (17/08/2026):** initial JS for the
+connect-screen load (the app's actual entry point) **≤ 160KB gzipped**.
+Pre-code-splitting this session, the single bundle was 260.67KB gzipped;
+post-splitting (lazy `/app` route tree, lazy Settings admin tabs, lazy
+emoji picker/dataset, dynamic-imported `mediasoup-client`) it measures
+~139.2KB gzipped (432.5KB index chunk + the small always-needed
+`createLucideIcon`/`rolldown-runtime`/`workbox-window` chunks). 160KB
+leaves headroom for incidental growth while still catching a real
+regression (e.g. a new eager dependency, or a lazy boundary accidentally
+becoming unconditionally-mounted — see the P7.6 progress.txt entry for a
+real instance of that exact mistake and its fix).
+
 **P7.7 — Cross-device/cross-browser testing matrix**
 Minimum real-device (not purely emulated) pass before launch:
 

@@ -65,7 +65,10 @@ export function DmRoute() {
                   <Mail className="size-3.5" />
                   <span className="max-w-32 truncate">{tabPartner?.nickname ?? id}</span>
                   {tabPartner && tabPartner.unreadCount > 0 && id !== partnerId && (
-                    <span aria-label="Unread" className="size-1.5 shrink-0 rounded-full bg-primary" />
+                    <>
+                      <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-primary" />
+                      <span className="sr-only">Unread</span>
+                    </>
                   )}
                   <button
                     type="button"

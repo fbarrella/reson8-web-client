@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
 import { X } from "lucide-react";
 
@@ -27,6 +27,7 @@ export function AppShell() {
   const setVoicePanelOpen = useUiStore((s) => s.setVoicePanelOpen);
   const pendingAutoOpenPartnerId = useDmStore((s) => s.pendingAutoOpenPartnerId);
   const navigate = useNavigate();
+  const voicePanelRef = useRef<HTMLDivElement>(null);
 
   // One-shot mobile auto-open of the sole unread DM conversation right
   // after connect (Phase 5 PRD P5.2) — desktop instead just opens the tab,
@@ -36,6 +37,21 @@ export function AppShell() {
     navigate(`/app/dms/${pendingAutoOpenPartnerId}`);
     useDmStore.getState().setPendingAutoOpen(null);
   }, [pendingAutoOpenPartnerId, navigate]);
+
+  // Matches SettingsSheet's own modal contract (focus-on-open, Escape-to-close)
+  // — this sheet is functionally identical (full-screen, has a Close button)
+  // but previously had neither, and no role/landmark at all (axe: region,
+  // found in the P7.5 audit).
+  useEffect(() => {
+    if (!voicePanelOpen) return;
+    voicePanelRef.current?.focus();
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setVoicePanelOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [voicePanelOpen, setVoicePanelOpen]);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden lg:flex-row">
@@ -55,7 +71,10 @@ export function AppShell() {
         </div>
       )}
 
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div
+        className="flex min-w-0 flex-1 flex-col overflow-hidden"
+        aria-hidden={channelDrawerOpen || voicePanelOpen ? true : undefined}
+      >
         <AppHeader />
         <main className={cn("flex-1 overflow-y-auto")}>
           <Outlet />
@@ -65,15 +84,27 @@ export function AppShell() {
       </div>
 
       {/* lg: persistent third pane */}
-      <div className="hidden lg:block lg:w-80 lg:shrink-0 lg:border-l lg:border-border">
+      <aside
+        aria-label="Voice"
+        className="hidden lg:block lg:w-80 lg:shrink-0 lg:border-l lg:border-border"
+      >
         <VoicePanel />
-      </div>
+      </aside>
 
       {/* base/md: voice panel expands as a full-screen sheet over the mini-bar */}
       {voicePanelOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-card lg:hidden">
+        <div
+          ref={voicePanelRef}
+          tabIndex={-1}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="voice-panel-heading"
+          className="fixed inset-0 z-50 flex flex-col bg-card outline-none lg:hidden"
+        >
           <div className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">
-            <h2 className="text-base font-semibold text-foreground">Voice</h2>
+            <h2 id="voice-panel-heading" className="text-base font-semibold text-foreground">
+              Voice
+            </h2>
             <button
               type="button"
               aria-label="Close voice panel"

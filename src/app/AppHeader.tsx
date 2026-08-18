@@ -37,7 +37,7 @@ export function AppHeader() {
         <LatencyIndicator />
         <NavLink
           to="/app/dms"
-          aria-label="Direct Messages"
+          aria-label={hasUnreadDms ? "Direct Messages (unread)" : "Direct Messages"}
           className={({ isActive }) =>
             cn(
               "relative hidden size-9 items-center justify-center rounded-md lg:flex",
@@ -48,7 +48,7 @@ export function AppHeader() {
           <Mail className="size-5" />
           {hasUnreadDms && (
             <span
-              aria-label="Unread"
+              aria-hidden="true"
               className="absolute top-1 right-1 size-2 rounded-full bg-primary ring-2 ring-card"
             />
           )}

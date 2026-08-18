@@ -3,9 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0f1115" />
     <meta name="description" content="Reson8 — self-hosted voice & text communication, in your browser." />
+    <!-- iOS has no beforeinstallprompt / manifest-driven install UX — these
+         are the only two levers it honors for "Add to Home Screen" quality
+         (standalone launch, status-bar tint); see src/features/pwa/InstallPrompt.tsx -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Reson8" />
     <title>Reson8</title>
   </head>
   <body>

@@ -91,7 +91,7 @@ export function CreateChannelDialog({
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="channel-name">Name</Label>
               <Input id="channel-name" aria-invalid={!!errors.name} {...register("name")} />
-              {errors.name && <p className="text-sm text-destructive">{errors.name.message}</p>}
+              {errors.name && <p className="text-sm text-destructive-text">{errors.name.message}</p>}
             </div>
 
             <div className="flex flex-col gap-1.5">
