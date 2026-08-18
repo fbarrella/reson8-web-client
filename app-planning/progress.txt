@@ -3862,3 +3862,39 @@ Feature/Fix: Phase 7 — P7.7: Cross-device/cross-browser testing matrix
   Next Step: Await real-device results from the user (per
   P7.7-real-device-checklist.md), fold them into progress.txt, then
   P7.8 — Deployment.
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.7: Cross-device/cross-browser testing matrix
+(real-device results)
+
+  Problem: The automated-portion entry above left the four platforms this
+  sandbox genuinely cannot exercise (iOS Safari, macOS Safari, desktop
+  Firefox, Android/iPad tablet) open, pending the user's own real-device
+  pass against `app-planning/P7.7-real-device-checklist.md`.
+
+  Solution: User confirmed a real-device pass covering iOS Safari (P0),
+  macOS Safari (P1), desktop Firefox (P1), and Android phone Chrome
+  ("mobile" — re-confirming the P0 row their original Bug 1/Bug 2 reports
+  came from, this time against the fixed `v6.1.0` build) — all passing per
+  the checklist's core path, with no specifics reported as failing. This
+  covers every P0 row and every P1 row in the phase PRD's matrix table.
+
+  Not covered: the P2 row (Android tablet / iPad, validating the `md:`
+  two-pane breakpoint specifically) — lowest priority in the PRD's own
+  table, left as a genuinely open, acknowledged gap rather than assumed
+  fine. Revisit if a tablet becomes available, but not blocking the rest
+  of Phase 7.
+
+  Verification:
+    User-reported, real hardware, against the actual checklist — not this
+    session's own claim. Per this project's own honesty discipline, noting
+    explicitly that the *specific* per-checkbox detail (e.g. did the iOS
+    install-panel wording show correctly, did Firefox's setSinkId
+    degradation look right) wasn't itemized back — "all passing" was the
+    report, not a line-by-line transcript. If anything platform-specific
+    turns out to be subtly off later, that would only surface on closer
+    inspection than this pass gave it.
+
+  Next Step: P7.8 — Deployment (hosting decision, HTTPS/WSS documentation,
+  CSP configuration).
