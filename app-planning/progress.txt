@@ -3769,3 +3769,96 @@ Voice tab route
   just the general matrix, would be the most valuable place to start).
 
 === Version bumped to 6.1.0 (18/08/2026) — classification: MINOR ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.7: Cross-device/cross-browser testing matrix
+(automated portion)
+
+  Problem: P7.7's own PRD wording requires "real-device (not purely
+  emulated)" testing across a specific platform/browser matrix — the
+  hardest phase item to satisfy from a sandboxed agent environment with no
+  physical devices. Before starting, confirmed exactly what this sandbox
+  can and can't do rather than assuming: Playwright's Firefox engine isn't
+  installed here at all, and its WebKit engine (Safari's rendering engine)
+  hangs/crashes on `page.goto` regardless of viewport (confirmed via a
+  direct launch test — not limited to the "mobile-safari" device-emulation
+  project specifically, as earlier phase entries had assumed; genuine
+  desktop WebKit fails identically). Only the Chromium engine is usable
+  here, at any viewport/device emulation.
+
+  Solution: Per the user's explicit choice (asked directly rather than
+  guessing), split the matrix into what this session verifies now
+  (automated, Chromium-only) versus what needs the user's own real
+  hardware (everything else) — see the new
+  `app-planning/P7.7-real-device-checklist.md`.
+
+  **Automated portion — the two P0 rows Chromium can faithfully
+  represent** ("Desktop Chrome/Edge", since Edge is Chromium-based too, and
+  "Android phone Chrome", using Playwright's real `Pixel 7` device
+  descriptor — not a fabricated viewport, the actual UA/viewport/
+  deviceScaleFactor/touch profile Playwright ships for that device): a
+  scratch sweep script drove both profiles through connect → channel tree
+  → chat send → emoji picker → voice join/mute/leave → Settings sheet →
+  service-worker-active, explicitly re-checking all three of this
+  session's earlier bug fixes at each viewport (channel-tree race,
+  false-positive permission toast, Voice tab placeholder). 22/22 checks
+  passed on both profiles on the final clean run.
+
+  Getting to that clean run took real iteration, worth recording since the
+  failure modes are exactly the kind that would recur in a future
+  session's own live-verification work against this same mock server: (1)
+  a fixed 400ms wait after connecting produced false "channel tree empty"
+  negatives under this sandbox's currently-elevated load (many browser
+  contexts opened this session) — replaced with waiting for the actual
+  content to attach rather than a guessed duration; (2) an unscoped
+  `nav[aria-label="Channels"]` selector hit a strict-mode violation at
+  desktop width, because `ChannelsPage`'s own `lg:hidden` inline copy of
+  the channel tree carries the identical `aria-label` — same
+  duplicate-hidden-instance class of issue as several fixes during P7.5,
+  resolved the same way (explicit `.first()`/scoping); (3) at desktop
+  width there are genuinely **two** "Leave voice" buttons in the DOM
+  simultaneously — `VoiceMiniBar`'s (present but `lg:hidden`, i.e. not
+  removed, just invisible) and the persistent `lg:` pane's own — an
+  unscoped locator's `.first()` picked the hidden one and hung forever
+  waiting for it to become clickable; fixed with Playwright's `:visible`
+  selector pseudo-class rather than guessing DOM order.
+
+  **Everything else — genuinely deferred, not just automated-and-glossed-
+  over**: iOS phone Safari (P0, the single highest-risk platform per the
+  PRD's own wording), desktop Firefox (P1), macOS Safari (P1), Android
+  tablet/iPad (P2). Wrote a concrete checklist for these rather than a
+  vague "please test on real devices" — per-platform core path (connect →
+  channels → chat → voice → DM → admin) plus the specific platform
+  constraints already documented in this repo's own CLAUDE.md (no
+  `beforeinstallprompt` on iOS, no `setSinkId` on Firefox, autoplay
+  restrictions on both Safari variants) so the user knows which behaviors
+  are expected platform gaps versus genuine bugs worth reporting, plus an
+  explicit call-out to specifically re-confirm this session's three bug
+  fixes hold on real hardware (the channel-tree race in particular was
+  only ever reproduced via a real-device report in the first place, so
+  real-device re-verification is the only fully conclusive check for it).
+
+  Edge Cases Handled:
+    None new to the app itself this entry — this was a verification pass,
+    not a code-change pass, aside from the test-script robustness fixes
+    described above (which live in the scratch sweep script only, not
+    committed, consistent with how every mock-server-dependent
+    verification script has been handled all session).
+
+  Key Files Modified:
+    app-planning/P7.7-real-device-checklist.md (NEW)
+
+  Verification:
+    22/22 automated Chromium-engine checks pass (Desktop Chrome + Pixel 7
+    profiles, 11 checks each) against the scratch mock server. Explicitly
+    NOT verified this session: iOS Safari, macOS Safari, desktop Firefox,
+    tablet breakpoints, or anything on genuine physical hardware — these
+    remain open until the user's own real-device pass comes back, at which
+    point results get folded into a follow-up progress.txt entry and
+    P7.7's acceptance criterion ("full device matrix... with results
+    recorded, not just 'should work' reasoning") gets properly closed out.
+
+  Next Step: Await real-device results from the user (per
+  P7.7-real-device-checklist.md), fold them into progress.txt, then
+  P7.8 — Deployment.
