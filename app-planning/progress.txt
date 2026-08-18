@@ -4646,3 +4646,111 @@ new users and contributors
   `app-planning/08-improvements-round.md` is met.
 
 === Version bumped to 7.7.1 (18/08/2026) — classification: PATCH ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Vercel deployment — fix 404 on subroute reload
+
+  Problem: Deployed on Vercel, reloading any client-routed subroute
+  (`/app`, `/app/dms/:id`, etc.) served a 404 instead of the app shell.
+  `DEPLOYMENT.md` had claimed "Netlify/Vercel/Cloudflare Pages do this
+  automatically for a Vite build" — true for Netlify and Cloudflare
+  Pages, but not actually true for Vercel: a plain Vite static build has
+  no framework-specific auto-detected SPA fallback there, so any path
+  Vercel's router can't match to a real static file 404s unless a
+  rewrite is configured explicitly.
+
+  Solution: Added a root `vercel.json` with a catch-all rewrite to
+  `index.html` — Vercel's documented SPA-fallback pattern:
+  `{"rewrites":[{"source":"/(.*)","destination":"/index.html"}]}`.
+  Static files under `public/`/the build output still take priority over
+  the rewrite per Vercel's own routing order (static-file match happens
+  before rewrites are applied), so this doesn't shadow real assets like
+  `/favicon.png` or `/icons/*` — only paths with no matching file fall
+  through to `index.html`, letting React Router take over client-side.
+  Corrected `DEPLOYMENT.md`'s SPA-fallback section to stop claiming
+  Vercel handles this automatically, and to point at the new
+  `vercel.json` as the actual fix.
+
+  Key Files Modified:
+    vercel.json (NEW) — SPA fallback rewrite
+    DEPLOYMENT.md — corrected the Vercel auto-detection claim
+
+  Verification:
+    `npm run build` succeeds; `vercel.json` validated as well-formed
+    JSON. Not deployed to an actual Vercel project to confirm the fix
+    end-to-end in this sandbox (no Vercel access here) — this is
+    Vercel's own documented SPA-rewrite pattern, but a real deploy
+    check is still worth doing once pushed.
+
+  Next Step: none — standalone fix.
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Replace the wrong app icon (favicon, top bar, README) with
+the correct Reson8 icon
+
+  Problem: The icon used for the browser-tab favicon, the top-bar logo
+  (added in the Improvements Round's IR8), and the README's header
+  (IR10) was `public/favicon.svg` — a purple abstract wordmark that
+  turns out not to be the actual Reson8 icon. The correct icon is
+  `public/icons/icon-512.png` (the orange circle with an "8" + sound-
+  wave mark), already used correctly for the PWA manifest's install
+  icons (`icon-192.png`/`icon-512.png`/`icon-maskable-512.png`) but
+  never wired up for the favicon or in-app/README uses.
+
+  Solution: No image-processing tool (ImageMagick, PIL/Pillow, sharp,
+  or any npm/pip package) was available in this sandbox — both the npm
+  and pip registries are unreachable here (confirmed via direct
+  connectivity checks, including the `NODE_OPTIONS=--network-family-
+  autoselection=false` workaround this repo's own progress log
+  documents for this environment's networking quirks). Wrote a small,
+  dependency-free PNG box-downscale resizer using only Python's stdlib
+  (`zlib` for DEFLATE compression/decompression, `struct` for chunk
+  parsing) — the source `icon-512.png` is a simple 8-bit RGBA, non-
+  interlaced PNG, so a from-scratch PNG decoder/encoder was tractable
+  without pulling in a real library. Used it to generate two correctly-
+  sized, area-averaged (high-quality downscale, not nearest-neighbor)
+  derivatives from the 512×512 source:
+    - `public/favicon.png` (32×32, 1.3KB) — browser-tab favicon.
+    - `public/icons/icon-64.png` (64×64, 3.1KB) — small enough for
+      frequent reuse, sized for the ~24px top-bar display size with
+      headroom for higher-DPI screens; also reused for the README's
+      64×64 header logo instead of minting a third near-duplicate
+      asset.
+  Both are dramatically smaller than the 512px source (108KB) or even
+  the 192px manifest icon (23KB) would have been if reused directly.
+
+  Rewired every reference: `index.html`'s `<link rel="icon">` now
+  points at `/favicon.png` (type `image/png`, replacing the old `image/
+  svg+xml` link); `AppHeader.tsx`'s top-bar `<img>` now points at `/
+  icons/icon-64.png`; `README.md`'s header logo now points at `public/
+  icons/icon-64.png`. Deleted the now-unreferenced `public/favicon.svg`
+  outright rather than leaving a stale, wrong-icon file behind.
+  `vite.config.ts`'s PWA manifest icon config was already correct
+  (already pointed at the real `icon-192.png`/`icon-512.png`/`icon-
+  maskable-512.png`) — no change needed there.
+
+  Key Files Modified:
+    public/favicon.png (NEW) — 32x32 favicon, generated from icon-512.png
+    public/icons/icon-64.png (NEW) — 64x64 logo, generated from icon-512.png
+    public/favicon.svg (DELETED) — the wrong icon
+    index.html — favicon <link> now points at /favicon.png
+    src/app/AppHeader.tsx — top-bar logo now points at /icons/icon-64.png
+    README.md — header logo now points at public/icons/icon-64.png
+
+  Verification:
+    `npm run typecheck` (clean), `npm run lint` (clean — 0 errors, 1
+    pre-existing unrelated warning), `npm run test` (33/33 passing, 5
+    test files, unchanged), `npm run build` (succeeds; confirmed both
+    new PNGs land in `dist/` at the expected paths), `npm run
+    check:bundle-size` (132.4KB gzip, within the 160KB budget —
+    unaffected, since these are static public assets, not bundled JS).
+    Visually inspected both generated PNGs before wiring them in — the
+    downscale is clean, no artifacts, transparent background preserved.
+    Did not visually confirm the favicon/top-bar logo rendering in an
+    actual browser tab or connected app view this session.
+
+  Next Step: none — standalone fix.
+
+=== Version bumped to 7.8.0 (18/08/2026) — classification: MINOR ===

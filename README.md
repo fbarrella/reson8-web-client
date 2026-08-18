@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="public/favicon.svg" alt="" width="72" height="72">
+<img src="public/icons/icon-64.png" alt="" width="64" height="64">
 
 # Reson8 Web Client
 
-[![Version](https://img.shields.io/badge/version-7.7.1-blue.svg)](app-planning/progress.txt)
+[![Version](https://img.shields.io/badge/version-7.8.0-blue.svg)](app-planning/progress.txt)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)](https://vitejs.dev)
@@ -25,7 +25,7 @@ If you're just here to use it: skip to [Quick start](#quick-start). If you're ev
 
 ## Status
 
-**v7.7.1.** The original seven-phase build-out is complete and shipped as v7.0.0 — foundation, voice, advanced voice/channel management, text chat, DMs/social, admin/moderation, and PWA platform polish (installability, a service-worker update flow, a "What's New" modal, a zero-violations accessibility audit, a Lighthouse-verified performance budget, a full real-device cross-browser/cross-device testing pass, and deployment docs). Since then, a post-launch **improvements round** — a set of fixes and small polish items found from real usage — has landed in full (see [`app-planning/08-improvements-round.md`](app-planning/08-improvements-round.md)). See [`app-planning/progress.txt`](app-planning/progress.txt) for the full, authoritative build log; treat any status summary here (this one included) as a snapshot that can lag behind it.
+**v7.8.0.** The original seven-phase build-out is complete and shipped as v7.0.0 — foundation, voice, advanced voice/channel management, text chat, DMs/social, admin/moderation, and PWA platform polish (installability, a service-worker update flow, a "What's New" modal, a zero-violations accessibility audit, a Lighthouse-verified performance budget, a full real-device cross-browser/cross-device testing pass, and deployment docs). Since then, a post-launch **improvements round** — a set of fixes and small polish items found from real usage — has landed in full (see [`app-planning/08-improvements-round.md`](app-planning/08-improvements-round.md)), along with a couple of standalone follow-up fixes (Vercel SPA routing, correct app icon). See [`app-planning/progress.txt`](app-planning/progress.txt) for the full, authoritative build log; treat any status summary here (this one included) as a snapshot that can lag behind it.
 
 ## Quick start
 

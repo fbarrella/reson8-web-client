@@ -21,10 +21,16 @@ covered below. Two things every option needs to get right:
 
 - **SPA fallback routing.** This app uses client-side routing (React
   Router) — every path that isn't a real static file (`/app`,
-  `/app/dms/:id`, etc.) must serve `index.html`, not a 404. Netlify/Vercel/
-  Cloudflare Pages do this automatically for a Vite build; a plain
-  nginx/S3 setup needs it configured explicitly (see `nginx.conf` in this
-  repo for a working example, used by Option B below too).
+  `/app/dms/:id`, etc.) must serve `index.html`, not a 404. Netlify and
+  Cloudflare Pages detect a Vite SPA and do this automatically; **Vercel
+  does not** — a plain Vite build deployed there 404s on any subroute
+  reload unless a rewrite is configured explicitly, which is what this
+  repo's root `vercel.json` does (`{"rewrites":[{"source":"/(.*)",
+  "destination":"/index.html"}]}` — static files under `public/` still
+  take priority over the rewrite, per Vercel's own routing order, so this
+  doesn't shadow real assets). A plain nginx/S3 setup needs the same
+  fallback configured explicitly too (see `nginx.conf` in this repo for a
+  working example, used by Option B below too).
 - **HTTPS.** Every host listed above provides this by default. If
   self-hosting on bare nginx/Apache, you must put TLS in front of it
   yourself — see the HTTPS section below for why this isn't optional.
