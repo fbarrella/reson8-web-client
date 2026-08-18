@@ -11,20 +11,23 @@ import {
 import { Button } from "@/components/ui/button";
 
 /**
- * Shown once per NSFW text channel per session, before its content renders
- * (Phase 3 PRD P3.5) — `useChannelTreeStore.confirmedNsfwChannelIds` tracks
- * which channels have already been confirmed this session.
+ * Shown on every entry into an NSFW text channel, from every entry path
+ * (Improvements Round IR1) — deliberately re-prompts each time rather than
+ * remembering a prior confirmation; the single gate lives in `ChatRoute`,
+ * the route both the channel tree and the Chats tab navigate through.
  */
 export function NsfwConfirmDialog({
   open,
   onOpenChange,
   channelName,
   onConfirm,
+  onCancel,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   channelName: string;
   onConfirm: () => void;
+  onCancel?: () => void;
 }) {
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -36,7 +39,7 @@ export function NsfwConfirmDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel onClick={onCancel}>Cancel</AlertDialogCancel>
           <AlertDialogAction asChild>
             <Button onClick={onConfirm}>Continue</Button>
           </AlertDialogAction>

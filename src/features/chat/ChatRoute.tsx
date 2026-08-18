@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ChevronLeft, Hash, X } from "lucide-react";
 
@@ -6,6 +6,7 @@ import { useChannelTreeStore } from "@/stores/channelTreeStore";
 import { useChatStore } from "@/stores/chatStore";
 import { ChannelType } from "@/types/reson8-protocol";
 import { ChatPane } from "@/features/chat/ChatPane";
+import { NsfwConfirmDialog } from "@/features/channels/NsfwConfirmDialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
@@ -27,14 +28,41 @@ export function ChatRoute() {
   const nodesById = useChannelTreeStore((s) => s.nodesById);
   const unreadChannelIds = useChatStore((s) => s.unreadChannelIds);
 
+  // NSFW confirmation (Improvements Round IR1) is gated here — the single
+  // route both the channel tree and the Chats tab navigate through — so it
+  // always re-prompts, regardless of entry path. `nsfwUnlockedChannelId`
+  // tracks confirmation for the *current* visit only: navigating to this
+  // channelId again later (e.g. tree -> away -> tree) resets it, since the
+  // effect below only ever unlocks the channelId React Router just routed
+  // to, not a persisted "seen before" set (that per-session cache was the
+  // original bug).
+  const [nsfwDialogOpen, setNsfwDialogOpen] = useState(false);
+  const [nsfwUnlockedChannelId, setNsfwUnlockedChannelId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setNsfwUnlockedChannelId(null);
+  }, [channelId]);
+
+  useEffect(() => {
+    if (!channelId || !node?.isNsfw) return;
+    if (nsfwUnlockedChannelId === channelId) return;
+    setNsfwDialogOpen(true);
+  }, [channelId, node?.isNsfw, nsfwUnlockedChannelId]);
+
   useEffect(() => {
     if (!channelId || node?.type === ChannelType.VOICE) return;
+    // Don't mark an NSFW channel "open" (tab strip / Chats-tab list) until
+    // the user actually confirms entry — otherwise it'd appear as an open
+    // tab behind the confirmation dialog before they've agreed to see it.
+    if (node?.isNsfw && nsfwUnlockedChannelId !== channelId) return;
     useChatStore.getState().openChannel(channelId);
-  }, [channelId, node?.type]);
+  }, [channelId, node?.type, node?.isNsfw, nsfwUnlockedChannelId]);
 
   if (!channelId || node?.type === ChannelType.VOICE) {
     return null;
   }
+
+  const nsfwBlocked = Boolean(node?.isNsfw && nsfwUnlockedChannelId !== channelId);
 
   const closeTab = (id: string) => {
     useChatStore.getState().closeChannel(id);
@@ -97,7 +125,20 @@ export function ChatRoute() {
         </TabsList>
       </Tabs>
 
-      <ChatPane channelId={channelId} />
+      {nsfwBlocked ? (
+        <NsfwConfirmDialog
+          open={nsfwDialogOpen}
+          onOpenChange={setNsfwDialogOpen}
+          channelName={node?.name ?? "this channel"}
+          onConfirm={() => {
+            setNsfwUnlockedChannelId(channelId);
+            setNsfwDialogOpen(false);
+          }}
+          onCancel={() => navigate("/app")}
+        />
+      ) : (
+        <ChatPane channelId={channelId} />
+      )}
     </div>
   );
 }

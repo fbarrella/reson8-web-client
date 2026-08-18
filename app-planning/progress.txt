@@ -4182,3 +4182,73 @@ improvements-round PRD
   both the channel tree and the Chats tab.
 
 === Version bumped to 7.0.1 (18/08/2026) — classification: PATCH ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — IR1: NSFW confirmation always prompts,
+from every entry path
+
+  Problem: The "this channel is NSFW, continue?" dialog only ever fired
+  once per channel per session, and only when entering via the channel
+  tree — never when opening the same channel from the Chats tab.
+
+  Solution: Root cause was two separate gaps: (1)
+  `channelTreeStore.confirmedNsfwChannelIds` persisted a "already
+  confirmed" flag for the whole session once set, so `ChannelTreePanel`
+  skipped the prompt on every subsequent visit; (2) `ChatRoute.tsx` — the
+  actual route both the channel tree *and* the Chats tab navigate to
+  (`/app/channels/:channelId`) — had no NSFW gate at all, so the Chats
+  tab bypassed the tree panel's gate entirely.
+
+  Moved the gate to `ChatRoute`, the single point both entry paths
+  converge on, and dropped the "confirmed once" persistence model in
+  favor of a per-visit-only unlock: `nsfwUnlockedChannelId` state tracks
+  confirmation only for the channelId React Router most recently routed
+  to, reset via a `useEffect` keyed on `channelId` every time it changes
+  — so navigating away and back to the same NSFW channel re-prompts,
+  where the old session-wide Set would have silently skipped it.
+  `ChannelTreePanel`'s own (now-redundant) gate was removed; clicking a
+  text channel row there just navigates, same as any other channel.
+
+  Also deferred marking an NSFW channel "open" (tab strip / Chats-tab
+  list, via `chatStore.openChannel`) until the user actually confirms —
+  previously it would have been marked open immediately on navigation,
+  before the confirmation dialog was even answered.
+
+  `NsfwConfirmDialog` gained an optional `onCancel` prop (wired to
+  `AlertDialogCancel`'s `onClick`) so `ChatRoute` can navigate back to
+  `/app` on an explicit cancel, distinct from the auto-close Radix's
+  `AlertDialogAction` already triggers on confirm (relying on
+  `onOpenChange(false)` alone couldn't distinguish the two, since Radix
+  fires it for both).
+
+  Edge Cases Handled:
+    Revisiting the same NSFW channel without truly navigating away (e.g.
+    clicking an already-active tab) does not re-prompt, matching the
+    "once per continuous view" expectation — only an actual `channelId`
+    change resets the unlock.
+    Voice channels are unaffected — the gate only ever applied to
+    `!isVoice` channels, unchanged.
+
+  Key Files Modified:
+    src/features/chat/ChatRoute.tsx — added the NSFW gate (state,
+      effects, dialog render, ChatPane conditional)
+    src/features/channels/ChannelTreePanel.tsx — removed the now-
+      redundant per-session gate and its state/store reads
+    src/features/channels/NsfwConfirmDialog.tsx — added `onCancel` prop
+    src/stores/channelTreeStore.ts — removed `confirmedNsfwChannelIds`
+      and `confirmNsfw` (dead state once the gate is per-visit, not
+      per-session)
+
+  Verification:
+    `npm run typecheck` (clean), `npm run lint` (clean), `npm run test`
+    (33/33 passing, 5 test files — no existing tests covered these
+    files, none needed updating). Not manually exercised in a browser
+    against a live server this session — recommend a manual check
+    (tree entry, Chats-tab entry, revisit-same-channel, cancel-then-
+    revisit) before considering this fully verified end-to-end.
+
+  Next Step: IR2 — make the NSFW badge visible everywhere a channel name
+  renders in the Chats tab, not just the channel tree.
+
+=== Version bumped to 7.1.0 (18/08/2026) — classification: MINOR ===

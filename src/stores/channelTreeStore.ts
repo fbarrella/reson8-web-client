@@ -19,8 +19,6 @@ interface ChannelTreeState {
    */
   reorderingParentId: string | null | undefined;
   stagedOrder: string[];
-  /** Per-session NSFW confirmation (Phase 3 PRD P3.5) — cleared on disconnect. */
-  confirmedNsfwChannelIds: Set<string>;
 
   setTree: (tree: IChannelTreeNode[]) => void;
   updatePresence: (channelId: string, occupants: IUserPresence[]) => void;
@@ -28,7 +26,6 @@ interface ChannelTreeState {
   moveStaged: (channelId: string, direction: "up" | "down") => void;
   setStagedOrder: (order: string[]) => void;
   cancelReorder: () => void;
-  confirmNsfw: (channelId: string) => void;
   reset: () => void;
 }
 
@@ -49,7 +46,6 @@ export const useChannelTreeStore = create<ChannelTreeState>((set, get) => ({
   nodesById: new Map(),
   reorderingParentId: undefined,
   stagedOrder: [],
-  confirmedNsfwChannelIds: new Set(),
 
   setTree: (tree) => set({ tree, nodesById: indexTree(tree) }),
 
@@ -80,14 +76,11 @@ export const useChannelTreeStore = create<ChannelTreeState>((set, get) => ({
 
   cancelReorder: () => set({ reorderingParentId: undefined, stagedOrder: [] }),
 
-  confirmNsfw: (channelId) => set({ confirmedNsfwChannelIds: new Set(get().confirmedNsfwChannelIds).add(channelId) }),
-
   reset: () =>
     set({
       tree: [],
       nodesById: new Map(),
       reorderingParentId: undefined,
       stagedOrder: [],
-      confirmedNsfwChannelIds: new Set(),
     }),
 }));
