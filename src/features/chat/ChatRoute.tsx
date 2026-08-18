@@ -8,6 +8,7 @@ import { ChannelType } from "@/types/reson8-protocol";
 import { ChatPane } from "@/features/chat/ChatPane";
 import { NsfwConfirmDialog } from "@/features/channels/NsfwConfirmDialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 /**
@@ -32,22 +33,18 @@ export function ChatRoute() {
   // route both the channel tree and the Chats tab navigate through — so it
   // always re-prompts, regardless of entry path. `nsfwUnlockedChannelId`
   // tracks confirmation for the *current* visit only: navigating to this
-  // channelId again later (e.g. tree -> away -> tree) resets it, since the
-  // effect below only ever unlocks the channelId React Router just routed
-  // to, not a persisted "seen before" set (that per-session cache was the
-  // original bug).
-  const [nsfwDialogOpen, setNsfwDialogOpen] = useState(false);
+  // channelId again later (e.g. tree -> away -> tree) resets it. Reset
+  // happens during render (React's documented "adjusting state when a prop
+  // changes" pattern — https://react.dev/learn/you-might-not-need-an-effect
+  // #adjusting-some-state-when-a-prop-changes), not in an effect, so the
+  // dialog's open/closed state is a plain render-time derivation
+  // (`nsfwBlocked` below) rather than state synced via a setState-in-effect.
   const [nsfwUnlockedChannelId, setNsfwUnlockedChannelId] = useState<string | null>(null);
-
-  useEffect(() => {
+  const [lastRoutedChannelId, setLastRoutedChannelId] = useState(channelId);
+  if (channelId !== lastRoutedChannelId) {
+    setLastRoutedChannelId(channelId);
     setNsfwUnlockedChannelId(null);
-  }, [channelId]);
-
-  useEffect(() => {
-    if (!channelId || !node?.isNsfw) return;
-    if (nsfwUnlockedChannelId === channelId) return;
-    setNsfwDialogOpen(true);
-  }, [channelId, node?.isNsfw, nsfwUnlockedChannelId]);
+  }
 
   useEffect(() => {
     if (!channelId || node?.type === ChannelType.VOICE) return;
@@ -85,6 +82,11 @@ export function ChatRoute() {
         </button>
         <Hash className="size-4 text-muted-foreground" />
         <span className="truncate text-sm font-semibold text-foreground">{node?.name ?? "Channel"}</span>
+        {node?.isNsfw && (
+          <Badge variant="destructive" className="shrink-0">
+            18+
+          </Badge>
+        )}
       </div>
 
       {/* md:/lg: tabs strip for multiple simultaneously-open channels */}
@@ -97,6 +99,11 @@ export function ChatRoute() {
                 <div role="tab" className="group/tab cursor-pointer">
                   <Hash className="size-3.5" />
                   <span className="max-w-32 truncate">{tabNode?.name ?? id}</span>
+                  {tabNode?.isNsfw && (
+                    <Badge variant="destructive" className="shrink-0 px-1 py-0 text-[10px]">
+                      18+
+                    </Badge>
+                  )}
                   {unreadChannelIds.has(id) && id !== channelId && (
                     <>
                       <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-primary" />
@@ -127,13 +134,12 @@ export function ChatRoute() {
 
       {nsfwBlocked ? (
         <NsfwConfirmDialog
-          open={nsfwDialogOpen}
-          onOpenChange={setNsfwDialogOpen}
-          channelName={node?.name ?? "this channel"}
-          onConfirm={() => {
-            setNsfwUnlockedChannelId(channelId);
-            setNsfwDialogOpen(false);
+          open={nsfwBlocked}
+          onOpenChange={() => {
+            /* visibility is derived from `nsfwBlocked`, not synced state — see the note above */
           }}
+          channelName={node?.name ?? "this channel"}
+          onConfirm={() => setNsfwUnlockedChannelId(channelId)}
           onCancel={() => navigate("/app")}
         />
       ) : (

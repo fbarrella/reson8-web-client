@@ -4252,3 +4252,57 @@ from every entry path
   renders in the Chats tab, not just the channel tree.
 
 === Version bumped to 7.1.0 (18/08/2026) — classification: MINOR ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — IR2: NSFW badge visible everywhere a
+channel name renders in the Chats tab
+
+  Problem: The "18+" destructive badge only ever rendered in the channel
+  tree (`ChannelTreePanel`). Nowhere a channel's name appeared in the
+  Chats tab showed it — not the flat open/unread list, not the mobile
+  chat header, not the desktop tabs strip.
+
+  Solution: Added the same `Badge variant="destructive"` (18+) next to
+  the channel name at each of the three render sites that were missing
+  it: `ChatTabPage.tsx`'s list row, `ChatRoute.tsx`'s mobile full-screen
+  header, and `ChatRoute.tsx`'s `lg:` tabs strip (a more compact
+  `px-1 py-0 text-[10px]` sizing there specifically, to fit the strip's
+  existing `max-w-32 truncate` tab width without overflowing).
+
+  Also fixed a `react-hooks/set-state-in-effect` lint violation in
+  `ChatRoute.tsx` that turned out to already be present from IR1's
+  commit — the two `useEffect`s that reset/opened NSFW gate state via
+  synchronous `setState` calls inside the effect body are exactly the
+  pattern that rule flags. Replaced with React's documented
+  "adjusting state during render" pattern instead: `nsfwUnlockedChannelId`
+  is now reset inline during render (comparing against a
+  `lastRoutedChannelId` state value) rather than via an effect, and the
+  confirm dialog's `open` prop is now a direct derivation of `nsfwBlocked`
+  rather than mirrored into separate `nsfwDialogOpen` state kept in sync
+  by an effect. Functionally identical to what IR1 intended; this is a
+  correctness/lint fix on IR1's implementation, caught because this
+  entry's `npm run lint` was verified against its actual output content —
+  IR1's own lint check was (incorrectly) treated as passing from a
+  background-task completion summary alone, without reading the output
+  file to confirm zero problems. Worth flagging for future entries in
+  this log: always read the actual lint/test output, not just a task's
+  reported exit status.
+
+  Key Files Modified:
+    src/features/chat/ChatTabPage.tsx — NSFW badge on list rows
+    src/features/chat/ChatRoute.tsx — NSFW badge on mobile header + tabs
+      strip; reworked the IR1 NSFW-gate state to fix the lint violation
+      described above
+
+  Verification:
+    `npm run typecheck` (clean), `npm run lint` (clean — 0 errors, 1
+    pre-existing unrelated warning in `CreateChannelDialog.tsx`, verified
+    by reading the actual command output this time), `npm run test`
+    (33/33 passing, 5 test files, unchanged). Not manually exercised in a
+    browser against a live server this session.
+
+  Next Step: IR3 — make custom emoji reactions render as their approved
+  image instead of literal `:name:` text.
+
+=== Version bumped to 7.2.0 (18/08/2026) — classification: MINOR ===

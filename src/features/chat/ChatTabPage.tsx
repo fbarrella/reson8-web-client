@@ -3,6 +3,7 @@ import { Hash } from "lucide-react";
 
 import { useChatStore } from "@/stores/chatStore";
 import { useChannelTreeStore } from "@/stores/channelTreeStore";
+import { Badge } from "@/components/ui/badge";
 
 /**
  * The bottom tab bar's "Chat" destination (master PRD §5.1: "Chat (badge =
@@ -43,6 +44,11 @@ export function ChatTabPage() {
             >
               <Hash className="size-4 shrink-0 text-muted-foreground" />
               <span className="flex-1 truncate">{node.name}</span>
+              {node.isNsfw && (
+                <Badge variant="destructive" className="shrink-0">
+                  18+
+                </Badge>
+              )}
               {unreadChannelIds.has(id) && (
                 <>
                   <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-primary" />
