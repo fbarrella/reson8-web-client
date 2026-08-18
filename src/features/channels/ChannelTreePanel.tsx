@@ -14,7 +14,6 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChannelActionsMenu } from "@/features/channels/ChannelActionsMenu";
-import { NsfwConfirmDialog } from "@/features/channels/NsfwConfirmDialog";
 import { CreateChannelDialog } from "@/features/channels/CreateChannelDialog";
 import { ReorderableSiblingList } from "@/features/channels/ReorderableSiblingList";
 
@@ -30,15 +29,12 @@ function ChannelRow({ node, depth }: { node: IChannelTreeNode; depth: number }) 
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(node.name);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [nsfwConfirmOpen, setNsfwConfirmOpen] = useState(false);
   const hasChildren = node.children.length > 0;
   const isVoice = node.type === ChannelType.VOICE;
   const currentVoiceChannelId = useVoiceStore((s) => s.currentChannelId);
   const activeSpeakerUserIds = useVoiceStore((s) => s.activeSpeakerUserIds);
   const isCurrentVoiceChannel = isVoice && node.id === currentVoiceChannelId;
   const canManageChannels = useHasPermission(PermissionFlags.MANAGE_CHANNELS);
-  const isNsfwConfirmed = useChannelTreeStore((s) => s.confirmedNsfwChannelIds.has(node.id));
-  const confirmNsfw = useChannelTreeStore((s) => s.confirmNsfw);
   const reorderingParentId = useChannelTreeStore((s) => s.reorderingParentId);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFired = useRef(false);
@@ -82,13 +78,10 @@ function ChannelRow({ node, depth }: { node: IChannelTreeNode; depth: number }) 
       longPressFired.current = false;
       return;
     }
-    // NSFW confirmation gates first entry to a text channel this session
-    // (Phase 3 PRD P3.5) — only meaningful once Phase 4 renders real chat
-    // content, but the gate is wired now so that surface can build behind it.
-    if (!isVoice && !hasChildren && node.isNsfw && !isNsfwConfirmed) {
-      setNsfwConfirmOpen(true);
-      return;
-    }
+    // NSFW confirmation (Improvements Round IR1) is gated centrally in
+    // ChatRoute — the single destination both this panel and the Chats tab
+    // navigate to — so it always re-prompts regardless of entry path,
+    // rather than being duplicated and session-cached here.
     proceedWithClick();
   };
 
@@ -225,17 +218,6 @@ function ChannelRow({ node, depth }: { node: IChannelTreeNode; depth: number }) 
           />
         )}
       </div>
-
-      <NsfwConfirmDialog
-        open={nsfwConfirmOpen}
-        onOpenChange={setNsfwConfirmOpen}
-        channelName={node.name}
-        onConfirm={() => {
-          confirmNsfw(node.id);
-          setNsfwConfirmOpen(false);
-          proceedWithClick();
-        }}
-      />
 
       {isVoice && node.occupants.length > 0 && (
         <ul className="flex flex-col gap-0.5" style={{ paddingLeft: `${depth * 16 + 32}px` }}>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Send, Paperclip, X, RotateCw, Loader2 } from "lucide-react";
+import { Send, Paperclip, Smile, X, RotateCw, Loader2 } from "lucide-react";
 
 import { useConnectionStore } from "@/stores/connectionStore";
 import { uploadAttachment, validateAttachmentFile, type UploadResult } from "@/services/uploadService";
@@ -147,7 +147,7 @@ export function Composer({
       )}
 
       <div className="flex items-end gap-1.5">
-        <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/gif,image/webp" capture="environment" hidden onChange={handleFileChange} />
+        <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/gif,image/webp" hidden onChange={handleFileChange} />
         <Button
           type="button"
           variant="ghost"
@@ -163,7 +163,7 @@ export function Composer({
           onPick={insertAtCursor}
           trigger={
             <Button type="button" variant="ghost" size="icon" aria-label="Insert emoji">
-              🙂
+              <Smile className="size-5" />
             </Button>
           }
         />

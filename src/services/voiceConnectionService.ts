@@ -1,6 +1,7 @@
 import { socketService } from "@/services/socketService";
 import { VoiceService } from "@/services/voiceService";
 import { useVoiceStore, readUserOverride } from "@/stores/voiceStore";
+import { useConnectionStore } from "@/stores/connectionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { toast } from "@/stores/toastStore";
 import { soundAlert } from "@/lib/soundAlert";
@@ -146,8 +147,23 @@ export async function joinVoiceChannel(channelId: string): Promise<JoinVoiceResu
   }
 }
 
-/** Explicit leave — clears lastVoiceChannelId so no reconnect auto-rejoins. */
-export function leaveVoiceChannel(): void {
+/**
+ * Explicit leave — clears lastVoiceChannelId so no reconnect auto-rejoins.
+ *
+ * `silent` (Improvements Round IR6/IR7): pass `true` when this is being
+ * called as a cleanup side-effect of a full server disconnect
+ * (`connectionService.leaveServer()`), not as the user explicitly leaving
+ * a voice channel — that flow plays its own `disconnected` sound instead.
+ * Previously this always played `leaving-channel` unconditionally, even
+ * when there was no `currentChannelId` to leave (i.e. the user wasn't in
+ * voice at all), which is why disconnecting from Settings played
+ * `leaving-channel` regardless of voice state instead of a sound that
+ * actually communicated "you disconnected." The sound is now guarded by
+ * the same `currentChannelId` truthiness already used for the socket
+ * leave-channel emit, so it only ever fires for a real voice-channel
+ * leave, from the real explicit-leave call sites.
+ */
+export function leaveVoiceChannel(silent = false): void {
   const { currentChannelId } = useVoiceStore.getState();
   useVoiceStore.getState().setStatus("leaving");
 
@@ -158,7 +174,7 @@ export function leaveVoiceChannel(): void {
   voiceService = null;
   previousOccupantIds = new Set();
   useVoiceStore.getState().reset();
-  soundAlert.play("leaving-channel");
+  if (!silent && currentChannelId) soundAlert.play("leaving-channel");
 }
 
 /**
@@ -360,9 +376,18 @@ export const handlePresenceUpdateForVoice: ServerToClientEvents["PRESENCE_UPDATE
     useVoiceStore.getState().setChannel(currentChannelId, payload.sessionStartedAt);
   }
 
+  // The local user's own join/leave never contributes to these "someone
+  // else joined/left" cues (Improvements Round IR5) — it already has its
+  // own dedicated sound at the joinVoiceChannel()/leaveVoiceChannel() call
+  // sites. Without this exclusion, joinVoiceChannel() resets
+  // `previousOccupantIds` to empty right before the join completes, so the
+  // very next PRESENCE_UPDATE (which includes yourself) reads your own
+  // userId as a "new" occupant and doubles up "joining-channel" with
+  // "user_joined_channel" for the same self-join.
+  const selfUserId = useConnectionStore.getState().selfUserId;
   const nextOccupantIds = new Set(payload.occupants.map((o) => o.userId));
-  const hadJoins = [...nextOccupantIds].some((id) => !previousOccupantIds.has(id));
-  const departedIds = [...previousOccupantIds].filter((id) => !nextOccupantIds.has(id));
+  const hadJoins = [...nextOccupantIds].some((id) => id !== selfUserId && !previousOccupantIds.has(id));
+  const departedIds = [...previousOccupantIds].filter((id) => id !== selfUserId && !nextOccupantIds.has(id));
   const hadLeaves = departedIds.length > 0;
   const leaveWasKickOnly = hadLeaves && departedIds.every((id) => recentlyKickedUserIds.has(id));
   if (previousOccupantIds.size > 0 || nextOccupantIds.size > 0) {

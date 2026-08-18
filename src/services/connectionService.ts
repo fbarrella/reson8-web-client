@@ -470,9 +470,15 @@ export function connectToServer(params: ConnectParams): Promise<ConnectResult> {
   });
 }
 
+/**
+ * Intentional, user-initiated disconnect (e.g. Settings -> Disconnect).
+ * Plays `disconnected` itself, exactly once, regardless of whether the
+ * user was in a voice channel — the nested `leaveVoiceChannel(true)` call
+ * is silent cleanup, not a second sound (Improvements Round IR6).
+ */
 export function leaveServer(): void {
   const { serverId } = useConnectionStore.getState();
-  voiceConnectionService.leaveVoiceChannel();
+  voiceConnectionService.leaveVoiceChannel(true);
   cleanupLifecycle?.();
   cleanupLifecycle = null;
   if (serverId) socketService.leaveServer(serverId);
@@ -487,4 +493,5 @@ export function leaveServer(): void {
   useAdminStore.getState().reset();
   clearAppBadge();
   hasPendingNudgeBadge = false;
+  soundAlert.play("disconnected");
 }

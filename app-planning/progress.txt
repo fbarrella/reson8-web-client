@@ -4110,3 +4110,539 @@ Feature/Fix: Phase 7 — P7.7: real-device results, Android tablet + iPad
   version-bump marker immediately following this entry.
 
 === Version bumped to 7.0.0 (18/08/2026) — classification: MAJOR ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — setup: archive v7.0.0 PRDs, write the
+improvements-round PRD
+
+  Problem: v7.0.0 is live and has now been used against a real server;
+  real usage surfaced nine concrete defects/polish gaps (NSFW-prompt
+  bypass, missing NSFW badges in one tab, custom-emoji reactions
+  rendering as text, wrong reaction/emoji-picker icon, duplicate/missing/
+  misrouted voice sound alerts, no in-app logo, and a mobile
+  camera-only attachment picker). The Phase 1-7 PRD set (master PRD +
+  seven phase PRDs) is now historical — it documents how v7.0.0 was
+  built, not what this next round of work is. Continuing to treat those
+  files as the "current" scope doc (per CLAUDE.md's old pointer) would
+  be actively misleading for this round.
+
+  Solution: Moved the entire Phase 1-7 PRD set (`00-master-prd.md`
+  through `07-phase7-pwa-platform-polish.md`, plus
+  `P7.7-real-device-checklist.md`) into
+  `app-planning/archive/v7.0.0-phase-prds/` via `git mv`, preserving
+  them verbatim as the historical record for that work's rationale.
+  Wrote `app-planning/08-improvements-round.md` as the new active PRD:
+  nine numbered items (IR1-IR9), each grounded in an actual root-cause
+  investigation of the current source (file/line references, not
+  guesses) rather than restating the bug reports, plus a tenth item
+  (IR10, README rewrite) scoped to run last, after every fix lands.
+  One originally-requested item (displaying the connected server's
+  registered name in the top bar) was investigated and dropped: the
+  `reson8` server does store a `name` (via `SERVER_NAME`, in the
+  `IServer` DTO) but no Socket.io event/ack currently sends it to a
+  connected client (`USER_JOIN_SERVER`'s ack is
+  `{success, serverId?, error?}` only) — shipping it would require a
+  server-side protocol change, which conflicts with this repo's
+  confirmed non-goal #1. Confirmed with the product owner to drop it
+  rather than build a server-side stub.
+
+  Patched `CLAUDE.md`'s status line and PRD-pointer paragraph (previous
+  wording pointed at `app-planning/00-master-prd.md` and
+  `0N-phase*.md`, now both moved) to point at the new active PRD and
+  the archive location instead, so the file stays self-sufficient
+  rather than silently stale.
+
+  Also created ten tracked tasks (this session's task list) mirroring
+  the PRD's IR1-IR10 breakdown, to work through one at a time with an
+  explicit stop-and-confirm between each, per the user's requested
+  process for this round.
+
+  Key Files Modified:
+    app-planning/08-improvements-round.md (NEW)
+    app-planning/archive/v7.0.0-phase-prds/00-master-prd.md (moved)
+    app-planning/archive/v7.0.0-phase-prds/01-phase1-foundation-connection.md (moved)
+    app-planning/archive/v7.0.0-phase-prds/02-phase2-voice-core.md (moved)
+    app-planning/archive/v7.0.0-phase-prds/03-phase3-advanced-voice-channel-mgmt.md (moved)
+    app-planning/archive/v7.0.0-phase-prds/04-phase4-text-chat-messaging.md (moved)
+    app-planning/archive/v7.0.0-phase-prds/05-phase5-direct-messages-social.md (moved)
+    app-planning/archive/v7.0.0-phase-prds/06-phase6-admin-moderation.md (moved)
+    app-planning/archive/v7.0.0-phase-prds/07-phase7-pwa-platform-polish.md (moved)
+    app-planning/archive/v7.0.0-phase-prds/P7.7-real-device-checklist.md (moved)
+    CLAUDE.md — status line, PRD-pointer paragraph
+
+  Verification:
+    Documentation/planning-only change — no source under `src/` touched,
+    so `npm run typecheck`/`lint`/`test` were not re-run for this entry
+    (nothing they cover changed). Verified via `git status` that every
+    archived file moved cleanly with no content loss (git-detected
+    renames, not delete+add).
+
+  Next Step: IR1 — make the NSFW confirmation dialog always prompt, from
+  both the channel tree and the Chats tab.
+
+=== Version bumped to 7.0.1 (18/08/2026) — classification: PATCH ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — IR1: NSFW confirmation always prompts,
+from every entry path
+
+  Problem: The "this channel is NSFW, continue?" dialog only ever fired
+  once per channel per session, and only when entering via the channel
+  tree — never when opening the same channel from the Chats tab.
+
+  Solution: Root cause was two separate gaps: (1)
+  `channelTreeStore.confirmedNsfwChannelIds` persisted a "already
+  confirmed" flag for the whole session once set, so `ChannelTreePanel`
+  skipped the prompt on every subsequent visit; (2) `ChatRoute.tsx` — the
+  actual route both the channel tree *and* the Chats tab navigate to
+  (`/app/channels/:channelId`) — had no NSFW gate at all, so the Chats
+  tab bypassed the tree panel's gate entirely.
+
+  Moved the gate to `ChatRoute`, the single point both entry paths
+  converge on, and dropped the "confirmed once" persistence model in
+  favor of a per-visit-only unlock: `nsfwUnlockedChannelId` state tracks
+  confirmation only for the channelId React Router most recently routed
+  to, reset via a `useEffect` keyed on `channelId` every time it changes
+  — so navigating away and back to the same NSFW channel re-prompts,
+  where the old session-wide Set would have silently skipped it.
+  `ChannelTreePanel`'s own (now-redundant) gate was removed; clicking a
+  text channel row there just navigates, same as any other channel.
+
+  Also deferred marking an NSFW channel "open" (tab strip / Chats-tab
+  list, via `chatStore.openChannel`) until the user actually confirms —
+  previously it would have been marked open immediately on navigation,
+  before the confirmation dialog was even answered.
+
+  `NsfwConfirmDialog` gained an optional `onCancel` prop (wired to
+  `AlertDialogCancel`'s `onClick`) so `ChatRoute` can navigate back to
+  `/app` on an explicit cancel, distinct from the auto-close Radix's
+  `AlertDialogAction` already triggers on confirm (relying on
+  `onOpenChange(false)` alone couldn't distinguish the two, since Radix
+  fires it for both).
+
+  Edge Cases Handled:
+    Revisiting the same NSFW channel without truly navigating away (e.g.
+    clicking an already-active tab) does not re-prompt, matching the
+    "once per continuous view" expectation — only an actual `channelId`
+    change resets the unlock.
+    Voice channels are unaffected — the gate only ever applied to
+    `!isVoice` channels, unchanged.
+
+  Key Files Modified:
+    src/features/chat/ChatRoute.tsx — added the NSFW gate (state,
+      effects, dialog render, ChatPane conditional)
+    src/features/channels/ChannelTreePanel.tsx — removed the now-
+      redundant per-session gate and its state/store reads
+    src/features/channels/NsfwConfirmDialog.tsx — added `onCancel` prop
+    src/stores/channelTreeStore.ts — removed `confirmedNsfwChannelIds`
+      and `confirmNsfw` (dead state once the gate is per-visit, not
+      per-session)
+
+  Verification:
+    `npm run typecheck` (clean), `npm run lint` (clean), `npm run test`
+    (33/33 passing, 5 test files — no existing tests covered these
+    files, none needed updating). Not manually exercised in a browser
+    against a live server this session — recommend a manual check
+    (tree entry, Chats-tab entry, revisit-same-channel, cancel-then-
+    revisit) before considering this fully verified end-to-end.
+
+  Next Step: IR2 — make the NSFW badge visible everywhere a channel name
+  renders in the Chats tab, not just the channel tree.
+
+=== Version bumped to 7.1.0 (18/08/2026) — classification: MINOR ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — IR2: NSFW badge visible everywhere a
+channel name renders in the Chats tab
+
+  Problem: The "18+" destructive badge only ever rendered in the channel
+  tree (`ChannelTreePanel`). Nowhere a channel's name appeared in the
+  Chats tab showed it — not the flat open/unread list, not the mobile
+  chat header, not the desktop tabs strip.
+
+  Solution: Added the same `Badge variant="destructive"` (18+) next to
+  the channel name at each of the three render sites that were missing
+  it: `ChatTabPage.tsx`'s list row, `ChatRoute.tsx`'s mobile full-screen
+  header, and `ChatRoute.tsx`'s `lg:` tabs strip (a more compact
+  `px-1 py-0 text-[10px]` sizing there specifically, to fit the strip's
+  existing `max-w-32 truncate` tab width without overflowing).
+
+  Also fixed a `react-hooks/set-state-in-effect` lint violation in
+  `ChatRoute.tsx` that turned out to already be present from IR1's
+  commit — the two `useEffect`s that reset/opened NSFW gate state via
+  synchronous `setState` calls inside the effect body are exactly the
+  pattern that rule flags. Replaced with React's documented
+  "adjusting state during render" pattern instead: `nsfwUnlockedChannelId`
+  is now reset inline during render (comparing against a
+  `lastRoutedChannelId` state value) rather than via an effect, and the
+  confirm dialog's `open` prop is now a direct derivation of `nsfwBlocked`
+  rather than mirrored into separate `nsfwDialogOpen` state kept in sync
+  by an effect. Functionally identical to what IR1 intended; this is a
+  correctness/lint fix on IR1's implementation, caught because this
+  entry's `npm run lint` was verified against its actual output content —
+  IR1's own lint check was (incorrectly) treated as passing from a
+  background-task completion summary alone, without reading the output
+  file to confirm zero problems. Worth flagging for future entries in
+  this log: always read the actual lint/test output, not just a task's
+  reported exit status.
+
+  Key Files Modified:
+    src/features/chat/ChatTabPage.tsx — NSFW badge on list rows
+    src/features/chat/ChatRoute.tsx — NSFW badge on mobile header + tabs
+      strip; reworked the IR1 NSFW-gate state to fix the lint violation
+      described above
+
+  Verification:
+    `npm run typecheck` (clean), `npm run lint` (clean — 0 errors, 1
+    pre-existing unrelated warning in `CreateChannelDialog.tsx`, verified
+    by reading the actual command output this time), `npm run test`
+    (33/33 passing, 5 test files, unchanged). Not manually exercised in a
+    browser against a live server this session.
+
+  Next Step: IR3 — make custom emoji reactions render as their approved
+  image instead of literal `:name:` text.
+
+=== Version bumped to 7.2.0 (18/08/2026) — classification: MINOR ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — IR3: custom emoji reactions render as
+images, not `:name:` text
+
+  Problem: Reactions using a standard unicode emoji displayed the glyph
+  normally, but reactions using a custom emoji displayed the literal
+  token text (e.g. `:emoji-custom1:`) instead of the approved image.
+
+  Solution: `ReactionsRow.tsx` rendered `r.emoji` as plain text
+  unconditionally, never checking whether it was a `:name:`-shaped token
+  referencing a known custom emoji — unlike `MessageContent.tsx`, which
+  already did this correctly for emoji tokens in message body text.
+  Ported the same lookup: each reaction's `emoji` string is matched
+  against a `:name:` token pattern; if it matches and resolves to an
+  `APPROVED` entry in `useCustomEmojiStore`'s `byName` map, render a
+  small `<img>` (`resolveMediaUrl(emoji.imageUrl, serverUrl)`, sized to
+  fit the existing compact reaction-pill chip) instead of the raw text.
+  Unicode emoji reactions are unaffected — no token match, same plain-
+  glyph rendering as before. A reaction referencing a custom emoji that
+  is no longer approved/known falls back to the literal token text,
+  matching `MessageContent.tsx`'s existing degrade behavior.
+
+  Key Files Modified:
+    src/features/chat/ReactionsRow.tsx — custom-emoji-token-to-image
+      lookup, mirroring MessageContent.tsx's existing approach
+
+  Verification:
+    `npm run typecheck` (clean), `npm run lint` (clean — 0 errors, 1
+    pre-existing unrelated warning), `npm run test` (33/33 passing, 5
+    test files, unchanged). Not manually exercised in a browser against
+    a live server this session — recommend confirming against a real
+    custom emoji reaction before considering this fully verified.
+
+  Next Step: IR4 — replace the reaction/emoji-picker "+" and raw-emoji-
+  character icons with lucide-react's Smile icon.
+
+=== Version bumped to 7.3.0 (18/08/2026) — classification: MINOR ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — IR4: smiley-face icon for the
+reaction/emoji-picker buttons
+
+  Problem: Two different, both-wrong icons were used for "open the
+  emoji picker": the message "add a reaction" button used a `Plus`
+  (`+`) icon, an odd symbol for "react with an emoji"; the composer's
+  "insert emoji" button used a literal `🙂` unicode character as its
+  content, which risks reading as "click to send this exact emoji"
+  rather than "open a picker."
+
+  Solution: The desktop client's equivalent button
+  (`../reson8/apps/client/src/renderer/index.html`, `#btn-emoji`) uses
+  an inline SVG (circle + smile-mouth path + two eye dots,
+  `viewBox="0 0 24 24"`) that is, stroke-for-stroke, lucide-react's
+  built-in `Smile` icon — already a project dependency, no new asset
+  needed. Replaced `Plus` with `Smile` in `ReactionsRow.tsx`'s "add
+  reaction" button, and replaced the literal `🙂` character with
+  `<Smile className="size-5" />` in `Composer.tsx`'s "insert emoji"
+  button (matching the sizing convention of its sibling `Paperclip`/
+  `Send` icon buttons). Both buttons now render the same icon.
+
+  Key Files Modified:
+    src/features/chat/ReactionsRow.tsx — Plus -> Smile
+    src/features/chat/Composer.tsx — raw 🙂 character -> Smile icon
+
+  Verification:
+    `npm run typecheck` (clean), `npm run lint` (clean — 0 errors, 1
+    pre-existing unrelated warning), `npm run test` (33/33 passing, 5
+    test files, unchanged). Not manually exercised in a browser against
+    a live server this session.
+
+  Next Step: IR5 — suppress the "user joined your channel" sound firing
+  for the local user's own voice-channel join.
+
+=== Version bumped to 7.3.1 (18/08/2026) — classification: PATCH ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — IR5: suppress the self "user joined
+your channel" sound duplication on voice join
+
+  Problem: Joining a voice channel played two sounds simultaneously:
+  `joining-channel` (correct) and `user_joined_channel` (wrong — that
+  cue is meant for *other* occupants joining a channel you're already
+  in, not for your own join).
+
+  Solution: `joinVoiceChannel()` resets `previousOccupantIds` to an
+  empty `Set` before the join completes, then plays `joining-channel`
+  once it succeeds. The very next `PRESENCE_UPDATE` for that channel —
+  which includes yourself, since you just joined — is diffed by
+  `handlePresenceUpdateForVoice()` against that now-empty baseline, so
+  your own `userId` reads as a "new" occupant and
+  `soundAlert.play("user_joined_channel")` fires for yourself on top of
+  the alert that already correctly announced your own join.
+
+  Excluded the local user's own `userId` (read via
+  `useConnectionStore.getState().selfUserId`) from the join/leave
+  diffing in `handlePresenceUpdateForVoice()` — `hadJoins` and
+  `departedIds` now both skip `selfUserId`, so `user_joined_channel` /
+  `user_disconnected_from_channel` only ever reflect *other* occupants'
+  presence changes, never the local user's own transitions (which
+  already have dedicated sounds at their own call sites).
+
+  Key Files Modified:
+    src/services/voiceConnectionService.ts — selfUserId exclusion in
+      handlePresenceUpdateForVoice's join/leave diffing
+
+  Verification:
+    `npm run typecheck` (clean), `npm run lint` (clean — 0 errors, 1
+    pre-existing unrelated warning), `npm run test` (33/33 passing, 5
+    test files, unchanged — no existing test covers this function).
+    Not manually exercised against a live server this session —
+    recommend verifying both that (a) joining a channel with existing
+    occupants no longer doubles up your own join sound, and (b) a
+    second real user joining a channel you're already in still
+    correctly plays `user_joined_channel` (the exclusion must not
+    accidentally suppress real other-user join sounds).
+
+  Next Step: IR6+IR7 — fix disconnect/leave-voice sound routing (both
+  share the same root cause in leaveVoiceChannel()'s unconditional
+  "leaving-channel" play).
+
+=== Version bumped to 7.4.0 (18/08/2026) — classification: MINOR ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — IR6+IR7: fix disconnect/leave-voice
+sound routing
+
+  Problem: Two related sound-routing bugs, both traced to the same
+  function: (IR6) Settings -> Application -> "Disconnect" played
+  `leaving-channel` instead of a sound that actually communicated "you
+  disconnected." (IR7) Explicitly leaving a voice channel (voice panel,
+  mini-bar, or the disconnect-voice keyboard shortcut) was supposed to
+  play `leaving-channel` but was unreliable.
+
+  Solution: `voiceConnectionService.leaveVoiceChannel()` called
+  `soundAlert.play("leaving-channel")` unconditionally at its end — with
+  no check on whether `currentChannelId` was even set — unlike the
+  `socketService.leaveChannel(currentChannelId)` call three lines above
+  it, which correctly only fires `if (isConnected() && currentChannelId)`.
+  `connectionService.leaveServer()` (the Settings-Disconnect handler)
+  unconditionally calls `leaveVoiceChannel()` as its first cleanup step,
+  regardless of whether the user was ever in a voice channel to begin
+  with — so every disconnect played `leaving-channel`, and `leaveServer()`
+  never played anything of its own to signal the actual disconnect (the
+  existing `disconnected` sound asset was only wired to the *unexpected*
+  transport-loss path, a different, confusingly similarly-named handler).
+
+  Gave `leaveVoiceChannel()` a `silent` parameter (default `false`) and
+  guarded the `leaving-channel` play behind both `!silent` and the same
+  `currentChannelId` truthiness already guarding the socket leave-channel
+  emit — so the sound only ever fires for a real voice-channel leave now,
+  never as an unconditional side effect. `leaveServer()` now calls
+  `leaveVoiceChannel(true)` (silent cleanup) and plays `disconnected`
+  itself, exactly once, regardless of prior voice state — fixing IR6.
+  The real explicit-leave call sites (`VoicePanel.tsx`, `VoiceMiniBar.tsx`,
+  `voiceShortcutService.ts`'s disconnect-voice shortcut) all still call
+  `leaveVoiceChannel()` with no `silent` argument, so they reliably hear
+  the sound now that it's gated correctly instead of competing with
+  unrelated cleanup paths — the working theory for IR7 (per the PRD's own
+  "needs investigation" flag on this item).
+
+  Two call sites needed a small follow-up fix: `VoicePanel.tsx` and
+  `VoiceMiniBar.tsx` had wired `onClick={leaveVoiceChannel}` directly,
+  which — now that the function takes an optional `silent: boolean`
+  parameter — would receive the click's `MouseEvent` as that argument.
+  Changed both to `onClick={() => leaveVoiceChannel()}`.
+
+  Key Files Modified:
+    src/services/voiceConnectionService.ts — `silent` param, guarded
+      sound play
+    src/services/connectionService.ts — leaveServer() calls
+      leaveVoiceChannel(true) and plays "disconnected" itself
+    src/features/voice/VoicePanel.tsx — onClick wrapped in a no-arg arrow
+    src/features/voice/VoiceMiniBar.tsx — onClick wrapped in a no-arg
+      arrow
+
+  Verification:
+    `npm run typecheck` (clean — the onClick type errors described above
+    were caught and fixed by this check), `npm run lint` (clean — 0
+    errors, 1 pre-existing unrelated warning), `npm run test` (33/33
+    passing, 5 test files, unchanged). Not manually exercised against a
+    live server this session — per the PRD's own note on IR7, if the
+    leave-voice sound still doesn't play reliably after this guard fix in
+    real use, treat it as a second, distinct bug (e.g. check the
+    SoundAlertService's gesture-unlock state at the moment the leave
+    button is pressed) rather than assuming this fix is a complete
+    resolution until manually verified.
+
+  Next Step: IR8 — add the Reson8 logo to the top bar, next to the app
+  name.
+
+=== Version bumped to 7.5.0 (18/08/2026) — classification: MINOR ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — IR8: add the Reson8 logo to the top
+bar
+
+  Problem: The app had no visible branding/logo anywhere in the UI
+  itself — only in the browser tab (favicon) and the installed-PWA
+  icon.
+
+  Solution: `public/favicon.svg` already *is* the Reson8 logo (the same
+  purple abstract wordmark `../reson8/logo_512x512.png` and the desktop
+  client's `logo.png` use, already vendored into this repo's `public/`)
+  — a rendering gap, not an asset gap. Rendered it in `AppHeader.tsx` as
+  a plain `<img src="/favicon.svg" alt="" aria-hidden="true"
+  className="size-6" />` immediately to the left of the existing
+  `<h1>Reson8</h1>`, both wrapped in a small flex container so they sit
+  inline. `alt=""`/`aria-hidden` since the adjacent heading text already
+  conveys the app name to assistive tech — the logo is purely
+  decorative here, no redundant announcement needed. Referenced by
+  absolute path (`/favicon.svg`) rather than an imported module, since
+  it lives in `public/` (Vite serves that directory's contents as-is
+  from the root path) and there was no existing precedent in this repo
+  for importing a `public/` asset as a module.
+
+  Key Files Modified:
+    src/app/AppHeader.tsx — logo <img> next to the "Reson8" heading
+
+  Verification:
+    `npm run typecheck` (clean), `npm run lint` (clean — 0 errors, 1
+    pre-existing unrelated warning), `npm run test` (33/33 passing, 5
+    test files, unchanged). Started the dev server and confirmed
+    `/favicon.svg` serves correctly (200) at the path the new `<img>`
+    references. Did **not** visually confirm the logo rendering inside
+    an actual connected app view (`AppHeader` only renders once
+    connected to a `reson8` server, and no live server was reachable in
+    this sandbox to connect through) — this is a single-line, low-risk
+    `<img>` addition next to existing text using an asset already
+    confirmed to load, but a visual spot-check against a real server is
+    still recommended before considering this fully verified.
+
+  Next Step: IR9 — allow browsing existing files (not just the camera)
+  from the mobile chat attachment picker.
+
+=== Version bumped to 7.6.0 (18/08/2026) — classification: MINOR ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — IR9: mobile attachment picker allows
+browsing existing files, not just the camera
+
+  Problem: On phone/tablet, tapping the attach-file button in chat
+  opened the camera directly, with no way to pick an existing photo/
+  file from the device.
+
+  Solution: `Composer.tsx`'s file input had `capture="environment"` on
+  it, which is what forces mobile browsers to launch the camera
+  directly instead of presenting the native "Camera / Photo Library /
+  Files" chooser. Removed the attribute entirely — `accept="image/
+  jpeg,image/png,image/gif,image/webp"` alone is sufficient; mobile
+  browsers present their native picker (which still offers "take
+  photo" as one option, alongside browsing the gallery/files) once
+  `capture` is absent. One-attribute removal; no new UI/second button
+  needed, since the existing single attach button already covers both
+  use cases now. Desktop behavior is unaffected (desktop browsers
+  already ignore `capture`; the `accept` MIME filter still applies),
+  and upload validation / instant-thumbnail feedback are untouched —
+  this only changes which native picker UI opens.
+
+  Key Files Modified:
+    src/features/chat/Composer.tsx — removed capture="environment"
+      from the file input
+
+  Verification:
+    `npm run typecheck` (clean), `npm run lint` (clean — 0 errors, 1
+    pre-existing unrelated warning), `npm run test` (33/33 passing, 5
+    test files, unchanged). Not manually exercised on an actual mobile
+    device/browser this session — recommend confirming the native
+    chooser now offers "browse files/photos" (not just the camera) on
+    a real phone or tablet before considering this fully verified.
+
+  Next Step: IR10 (final item) — rework README.md for new users/
+  contributors, with stack/status shields and the app logo in the
+  title; update planning-doc links for the archive.
+
+=== Version bumped to 7.7.0 (18/08/2026) — classification: MINOR ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — IR10 (final item): README rewrite for
+new users and contributors
+
+  Problem: The README was written for a project mid-Phase-7, phase-map-
+  oriented, and served neither of its real two audiences well: a new
+  user who just wants to know what this is and how to run it, and an
+  aspiring contributor who needs the stack/architecture picture before
+  diving into CLAUDE.md. It also still pointed at the now-archived
+  `app-planning/00-master-prd.md` / `0N-phase*.md` paths.
+
+  Solution: Full rewrite. Added a centered header block with the app
+  logo (`public/favicon.svg`, same asset as IR8's top-bar logo) above
+  the title, plus a badge row (version, React 19, TypeScript 5.9, Vite
+  8, Tailwind CSS 4, PWA) — every badge is a static shields.io badge
+  reflecting an actually-true fact about the repo at rewrite time
+  (versions read from `package.json`/`node_modules`, not guessed).
+  Deliberately did **not** add a license badge — neither this repo nor
+  `../reson8` has ever established a LICENSE, and inventing one now
+  wasn't this item's call to make (same reasoning the P7.9
+  documentation-pass entry recorded). No CI-status badge either — no
+  `.github/workflows` exists in this repo, so there's nothing to
+  reflect.
+
+  New structure: a "What is this?" section explaining Reson8 (the
+  platform) and this client (the project) in plain terms for a first-
+  time reader, a Status section reflecting the post-improvements-round
+  state (no longer claiming Phase-7-in-progress), a Tech Stack table
+  aimed at the contributor audience, and a Contributing section
+  pointing to `CLAUDE.md` as the deep technical reference. The Planning
+  Documents section now points to `app-planning/08-improvements-round.md`
+  as the current active scope doc and
+  `app-planning/archive/v7.0.0-phase-prds/` for the historical Phase
+  1-7 set, replacing the stale direct links to the old top-level PRD
+  paths.
+
+  Key Files Modified:
+    README.md — full rewrite
+
+  Verification:
+    Documentation-only change — no source under `src/` touched, so
+    `npm run typecheck`/`lint`/`test` were not re-run for this entry
+    (nothing they cover changed; the prior IR9 entry already confirmed
+    all three green against the current source tree). Verified the
+    `public/favicon.svg` relative path resolves correctly from the repo
+    root (where README.md lives), and that section anchors referenced
+    in the in-page table of links (`#quick-start`, `#tech-stack`,
+    `#contributing`) match the headings' expected GitHub-generated
+    slugs. Did not render this through GitHub itself to visually
+    confirm — recommend a quick look at the rendered page once pushed.
+
+  Next Step: Improvements Round complete — all ten items (IR1-IR10)
+  done. Every acceptance criterion in
+  `app-planning/08-improvements-round.md` is met.
+
+=== Version bumped to 7.7.1 (18/08/2026) — classification: PATCH ===
