@@ -3431,3 +3431,182 @@ route/surface)
 
   Next Step: P7.6 — Performance budget (Lighthouse CI, code-splitting,
   bundle-size budget).
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.6: Performance budget (Lighthouse, code-splitting,
+bundle-size budget)
+
+  Problem: The entire app shipped as one JS bundle (965KB raw / 260.67KB
+  gzip) — a connect-screen visitor downloaded the whole channels/chat/dm/
+  voice feature set, every Settings tab (including admin-only ones), the
+  full ~552-entry emoji dataset, and `mediasoup-client` before ever
+  connecting. A baseline mobile-throttled Lighthouse run confirmed this was
+  a real, measured problem, not just theoretical: Performance 69/100 (Total
+  Blocking Time 840ms, ~175KB estimated unused JS) — well under the phase's
+  ≥90 target. The desktop-preset run scored 100/100/100, which would have
+  been a misleadingly clean signal on its own; testing with mobile
+  throttling (this app's own stated positioning) surfaced the real gap.
+
+  Solution: Installed `lighthouse` (^13.4.1) as a devDependency (network
+  access confirmed available this session; `npm view` succeeded before
+  installing). Its CLI needs `CHROME_PATH` explicitly set in this sandbox —
+  pointed at the same Playwright-managed Chromium binary every prior
+  session's live-verification passes have used
+  (`~/.cache/ms-playwright/chromium-1234/chrome-linux/chrome`).
+
+  Route-based code splitting (`React.lazy` + `Suspense`, matching the PRD's
+  "React Router's lazy route loading" phrasing) applied at four levels:
+    1. The entire `/app` route tree in `App.tsx` — `AppShell` and every
+       route element under it (`ChannelsPage`, `ChatRoute`, `ChatTabPage`,
+       `DmsListPage`, `DmRoute`, the voice `PlaceholderPane`). This is the
+       single biggest boundary: nothing under `RequireConnection` is
+       reachable before a successful `USER_JOIN_SERVER`, so none of it
+       belongs in the connect-screen's initial payload.
+    2. `SettingsSheet`'s three admin-only tabs (`RolesTab`,
+       `EmojiApprovalTab`, `ServerSettingsTab`) — most connected users never
+       hold the permissions to see these tabs at all, and even admins don't
+       need the code until Settings is open on that specific tab.
+    3. `EmojiPicker`'s heavy content: `EmojiPickerContent` (the emoji
+       dataset) and `CustomEmojiUploadDialog` (the crop tooling) — deferred
+       until the picker popover is actually opened / the upload dialog is
+       actually requested, per the PRD's explicit naming of this dataset.
+    4. `mediasoup-client` itself, via a *dynamic* `import("mediasoup-client")`
+       inside `voiceService.ts`'s `joinVoiceChannel()` (not a route-level
+       split): `connectionService.ts` — necessarily eager, since it's what
+       `ConnectScreen` calls — statically imports `voiceConnectionService`
+       to wire up `NEW_PRODUCER`/`PRODUCER_CLOSED`/etc. socket listeners at
+       connect time, and that import chain reached all the way down to
+       `voiceService.ts`'s top-level `import { Device } from
+       "mediasoup-client"`. Converting just that one value import (the
+       `MsTypes` *type* import stayed static — type-only imports are erased
+       at compile time regardless) to a dynamic import inside the one
+       method that actually calls `new Device()` moved all ~226KB raw /
+       ~39.5KB gzip of `mediasoup-client` into its own chunk, fetched only
+       when a user genuinely joins voice.
+
+  Real bug found and fixed mid-implementation, worth flagging for any
+  future session doing similar work in this repo: **`React.lazy` +
+  `Suspense` alone does not defer anything for an unconditionally-rendered
+  component.** The Suspense boundary only shows a fallback *while* the
+  import is in flight — if the lazy component is in the JSX tree from the
+  very first render (as `<SettingsSheet/>` and `<InstallPrompt/>` were,
+  both mounted unconditionally alongside `<Routes>` in `App.tsx`), its
+  `import()` still fires immediately, same as a static import would, just
+  with an extra fallback frame. Confirmed via a live network-request
+  capture on `/connect`: the first `React.lazy` pass still eagerly fetched
+  `SettingsSheet-*.js` (and its transitive `slider`/`MicLevelMeter` chunks)
+  and `InstallPrompt-*.js` on page load. Fixed by adding a `hasEverConnected`
+  latch in `App.tsx` (derived during render per React's own documented
+  pattern for this exact case — `if (status === "connected" &&
+  !hasEverConnected) setHasEverConnected(true)`, not in a `useEffect`,
+  which the project's ESLint config's `react-hooks/set-state-in-effect`
+  rule correctly flagged as an anti-pattern here) and only mounting those
+  two components once true. Neither needs to exist before a successful
+  connection: Settings' only trigger lives in `AppHeader` (inside the
+  already-deferred `AppShell`), and `InstallPrompt` already no-ops
+  internally until `status === "connected"`. Re-verified via a real
+  Playwright network capture after the fix: only 4 JS files load on
+  `/connect` now (the index chunk, `rolldown-runtime`, `createLucideIcon`,
+  and the async `workbox-window` service-worker registration script).
+
+  Bundle-size budget: set to **≤ 160KB gzipped** for the connect-screen's
+  initial JS payload (recorded in the phase 7 PRD's P7.6 section, per its
+  own instruction to fill this in once a real measurement exists — no
+  longer "don't guess," there's now code). Actual measured value:
+  132.5KB gzip. Added a real enforcement script,
+  `scripts/check-bundle-size.mjs` (wired as `npm run check:bundle-size`,
+  documented in CLAUDE.md's Commands list), that parses `dist/index.html`
+  for the entry `<script>` + every `modulepreload` `<link>` Vite emits
+  (i.e. exactly what a first-time visitor's browser fetches before the app
+  is interactive — deliberately excludes the async, non-blocking
+  `workbox-window` SW-registration fetch, which isn't part of that
+  critical path), gzips each with Node's own `zlib`, sums them, and exits
+  non-zero over budget. Not wired into a CI pipeline this phase (no CI
+  pipeline exists yet — that's P7.8/deployment territory) but is a real,
+  runnable check now rather than just a documented number.
+
+  PWA installability: Lighthouse 13.4.1 has **no `pwa` category and no
+  installable-manifest/service-worker/splash-screen audits at all**
+  (confirmed via `--list-all-audits` returning zero matches for
+  "pwa"/"install"/"manifest"/"worker"/"maskable"/"splash", and zero files
+  under `node_modules/lighthouse` matching "pwa") — Google removed the
+  built-in PWA category from Lighthouse core in a recent major version,
+  well before this session's install. The PRD's own wording ("Lighthouse CI
+  *or equivalent*") anticipated exactly this kind of tooling gap. Wrote an
+  equivalent scripted check covering the same underlying criteria Chrome
+  itself uses for install eligibility: manifest linked + fetchable + has
+  `name`/`short_name`/`display`/`start_url`, a ≥192×192 icon, a ≥512×512
+  icon, a maskable icon, every listed icon actually resolving (not just
+  listed), the service worker reaching `active` state, and secure-context
+  (`window.isSecureContext`, true on `localhost` per spec — matches this
+  repo's own documented dev-environment carve-out). All 14 checks pass.
+
+  Image/icon compression: checked rather than changed. Temporarily
+  reinstalled `sharp` (`--no-save`, same pattern as P7.1's session —
+  confirmed it did **not** leak into `package-lock.json` this time either,
+  verified via `git diff` before removing it again) and ran a lossless PNG
+  re-encode pass (`compressionLevel: 9, effort: 10, palette: false`) over
+  all four manifest/apple-touch icons generated in P7.1. Savings were
+  marginal (1.2–4.6%) — the icons were already reasonably compressed at
+  generation time — so left the actual files untouched rather than
+  re-touching launch-critical, already-screenshot-verified assets for a
+  few KB neither Lighthouse nor the bundle budget cares about (icons aren't
+  part of the initial JS payload; they're fetched by the browser's
+  manifest-processing flow, not the critical rendering path).
+
+  Results (all four P7.6 targets met):
+    - Performance: 97/100 (mobile-throttled, default Lighthouse preset) —
+      up from 69/100 baseline. Desktop preset: 99/100 (up from 100/100,
+      i.e. stayed maxed — desktop's generous thresholds were already
+      masking the real mobile-specific problem, which is exactly why the
+      mobile preset was the one that mattered here). Total Blocking Time
+      840ms -> 70ms; total page weight on `/connect` 287KB -> 170KB.
+    - PWA installability: pass (14/14 equivalent checks, per the
+      Lighthouse-category-removal note above).
+    - Accessibility: 100/100 (both presets) — consistent with P7.5's own
+      zero-violations result; re-ran that phase's full 33-surface live axe
+      audit against this session's rebuilt app afterward specifically to
+      confirm the Suspense-boundary restructuring introduced no
+      regression — still 33/33 clean.
+    - Best Practices: 100/100 (both presets).
+    - `unused-javascript` still flags ~77KB of estimated savings on the
+      main index chunk (inherent React/react-router/react-hook-form/zod/
+      zustand/socket.io-client framework overhead not exercised by the
+      connect screen specifically) — not chased further given Performance
+      is already 97-99/100 and TBT dropped to 70ms; diminishing returns
+      relative to the risk of deeper vendor-splitting surgery on
+      already-stable, already-tested code.
+
+  Key Files Modified:
+    src/App.tsx — lazy /app route tree, lazy SettingsSheet/InstallPrompt
+      gated on hasEverConnected latch
+    src/features/settings/SettingsSheet.tsx — lazy admin tabs
+      (RolesTab/EmojiApprovalTab/ServerSettingsTab)
+    src/features/emoji/EmojiPicker.tsx — lazy EmojiPickerContent +
+      CustomEmojiUploadDialog
+    src/services/voiceService.ts — dynamic import("mediasoup-client")
+      inside joinVoiceChannel()
+    scripts/check-bundle-size.mjs (NEW) — budget enforcement script
+    package.json — lighthouse devDependency, check:bundle-size script
+    CLAUDE.md — documented the new command
+    app-planning/07-phase7-pwa-platform-polish.md — recorded the concrete
+      160KB gzip budget decision in the P7.6 section
+
+  Verification:
+    npm run typecheck / lint / test (33/33, one unrelated Vitest
+    worker-pool startup timeout on a clean rerun — same known sandbox
+    flakiness noted in prior Phase 7 entries) / build all pass.
+    `npm run check:bundle-size`: 132.5KB gzip, under the 160KB budget.
+    Live Playwright smoke test across every lazy boundary (connect as both
+    a non-admin and the mock server's admin nickname): AppShell, ChatRoute,
+    the emoji picker, DmsListPage, SettingsSheet, and every admin tab
+    (Roles/Emojis/Server) all render correctly with zero console errors
+    (one benign 404 for a `/uploads/placeholder` fixture URL left over from
+    P7.5's mock-server emoji seed — pre-existing test-fixture noise, not a
+    regression). Lighthouse runs (mobile + desktop presets) and the P7.5
+    axe-core re-run (33/33 clean) both described above under Results.
+    No real-device pass this session, consistent with every Phase 7 item
+    so far — deferred to P7.7.
+
+  Next Step: P7.7 — Cross-device/cross-browser testing matrix.

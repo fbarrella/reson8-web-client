@@ -1,4 +1,3 @@
-import { Device } from "mediasoup-client";
 import type { types as MsTypes } from "mediasoup-client";
 
 /**
@@ -246,6 +245,13 @@ export class VoiceService {
       throw new Error(capRes.error ?? "Failed to get router capabilities");
     }
 
+    // Dynamic import (P7.6): mediasoup-client is one of the largest single
+    // dependencies in this app and is only ever needed once a user actually
+    // joins voice — connectionService imports this whole service eagerly at
+    // connect time (to wire up NEW_PRODUCER/etc. socket listeners), so a
+    // static top-level import here would put mediasoup-client in the
+    // connect-screen's initial bundle for every visitor, voice or not.
+    const { Device } = await import("mediasoup-client");
     this.device = new Device();
     await this.device.load({
       routerRtpCapabilities: capRes.rtpCapabilities,

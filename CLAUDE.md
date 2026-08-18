@@ -25,6 +25,7 @@ Scaffolded in Phase 1 (P1.1): Vite + React + TS strict + ESLint flat config + Pr
 - `npm run test` — Vitest (unit/component, jsdom)
 - `npm run test:watch` — Vitest in watch mode
 - `npm run test:e2e` — Playwright (multi-browser incl. mobile viewport emulation, config in `playwright.config.ts`)
+- `npm run check:bundle-size` — verifies the connect-screen's initial JS payload against the P7.6 performance budget (160KB gzipped); run after `npm run build`
 
 ## Architecture (target — see master PRD §4 for the full diagram)
 
