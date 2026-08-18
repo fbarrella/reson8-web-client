@@ -4306,3 +4306,42 @@ channel name renders in the Chats tab
   image instead of literal `:name:` text.
 
 === Version bumped to 7.2.0 (18/08/2026) — classification: MINOR ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — IR3: custom emoji reactions render as
+images, not `:name:` text
+
+  Problem: Reactions using a standard unicode emoji displayed the glyph
+  normally, but reactions using a custom emoji displayed the literal
+  token text (e.g. `:emoji-custom1:`) instead of the approved image.
+
+  Solution: `ReactionsRow.tsx` rendered `r.emoji` as plain text
+  unconditionally, never checking whether it was a `:name:`-shaped token
+  referencing a known custom emoji — unlike `MessageContent.tsx`, which
+  already did this correctly for emoji tokens in message body text.
+  Ported the same lookup: each reaction's `emoji` string is matched
+  against a `:name:` token pattern; if it matches and resolves to an
+  `APPROVED` entry in `useCustomEmojiStore`'s `byName` map, render a
+  small `<img>` (`resolveMediaUrl(emoji.imageUrl, serverUrl)`, sized to
+  fit the existing compact reaction-pill chip) instead of the raw text.
+  Unicode emoji reactions are unaffected — no token match, same plain-
+  glyph rendering as before. A reaction referencing a custom emoji that
+  is no longer approved/known falls back to the literal token text,
+  matching `MessageContent.tsx`'s existing degrade behavior.
+
+  Key Files Modified:
+    src/features/chat/ReactionsRow.tsx — custom-emoji-token-to-image
+      lookup, mirroring MessageContent.tsx's existing approach
+
+  Verification:
+    `npm run typecheck` (clean), `npm run lint` (clean — 0 errors, 1
+    pre-existing unrelated warning), `npm run test` (33/33 passing, 5
+    test files, unchanged). Not manually exercised in a browser against
+    a live server this session — recommend confirming against a real
+    custom emoji reaction before considering this fully verified.
+
+  Next Step: IR4 — replace the reaction/emoji-picker "+" and raw-emoji-
+  character icons with lucide-react's Smile icon.
+
+=== Version bumped to 7.3.0 (18/08/2026) — classification: MINOR ===

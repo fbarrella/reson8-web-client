@@ -1,8 +1,12 @@
 import { Plus } from "lucide-react";
 
 import { useConnectionStore } from "@/stores/connectionStore";
+import { useCustomEmojiStore } from "@/stores/customEmojiStore";
+import { resolveMediaUrl } from "@/lib/serverUrl";
 import { EmojiPicker } from "@/features/emoji/EmojiPicker";
 import { cn } from "@/lib/utils";
+
+const CUSTOM_EMOJI_TOKEN_RE = /^:([a-zA-Z0-9_]{2,32}):$/;
 
 /** Channel-vs-DM agnostic — the caller decides which service (and isDm
  *  flag) TOGGLE_REACTION goes out with (Phase 5 PRD P5.3 reuse). */
@@ -14,11 +18,21 @@ export function ReactionsRow({
   onToggle: (token: string) => void;
 }) {
   const selfUserId = useConnectionStore((s) => s.selfUserId);
+  const customEmojiByName = useCustomEmojiStore((s) => s.byName);
+  const serverUrl = useConnectionStore((s) => s.serverUrl);
 
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1">
       {(reactions ?? []).map((r) => {
         const active = selfUserId !== null && r.userIds.includes(selfUserId);
+        // `r.emoji` is either a raw unicode glyph or a `:name:` token
+        // referencing a custom emoji (Improvements Round IR3 — this mirrors
+        // MessageContent's identical lookup for emoji tokens in message
+        // body text, which already rendered custom emoji as images; the
+        // reaction row previously never made this check and always showed
+        // literal token text for custom emoji).
+        const customEmojiName = r.emoji.match(CUSTOM_EMOJI_TOKEN_RE)?.[1];
+        const customEmoji = customEmojiName ? customEmojiByName.get(customEmojiName) : undefined;
         return (
           <button
             key={r.emoji}
@@ -29,7 +43,16 @@ export function ReactionsRow({
               active ? "border-primary bg-primary/10 text-primary" : "border-border hover:bg-accent",
             )}
           >
-            <span>{r.emoji}</span>
+            {customEmoji && customEmoji.status === "APPROVED" ? (
+              <img
+                src={resolveMediaUrl(customEmoji.imageUrl, serverUrl)}
+                alt={r.emoji}
+                title={r.emoji}
+                className="size-3.5"
+              />
+            ) : (
+              <span>{r.emoji}</span>
+            )}
             <span>{r.count}</span>
           </button>
         );
