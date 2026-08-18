@@ -4588,3 +4588,61 @@ browsing existing files, not just the camera
   title; update planning-doc links for the archive.
 
 === Version bumped to 7.7.0 (18/08/2026) — classification: MINOR ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — IR10 (final item): README rewrite for
+new users and contributors
+
+  Problem: The README was written for a project mid-Phase-7, phase-map-
+  oriented, and served neither of its real two audiences well: a new
+  user who just wants to know what this is and how to run it, and an
+  aspiring contributor who needs the stack/architecture picture before
+  diving into CLAUDE.md. It also still pointed at the now-archived
+  `app-planning/00-master-prd.md` / `0N-phase*.md` paths.
+
+  Solution: Full rewrite. Added a centered header block with the app
+  logo (`public/favicon.svg`, same asset as IR8's top-bar logo) above
+  the title, plus a badge row (version, React 19, TypeScript 5.9, Vite
+  8, Tailwind CSS 4, PWA) — every badge is a static shields.io badge
+  reflecting an actually-true fact about the repo at rewrite time
+  (versions read from `package.json`/`node_modules`, not guessed).
+  Deliberately did **not** add a license badge — neither this repo nor
+  `../reson8` has ever established a LICENSE, and inventing one now
+  wasn't this item's call to make (same reasoning the P7.9
+  documentation-pass entry recorded). No CI-status badge either — no
+  `.github/workflows` exists in this repo, so there's nothing to
+  reflect.
+
+  New structure: a "What is this?" section explaining Reson8 (the
+  platform) and this client (the project) in plain terms for a first-
+  time reader, a Status section reflecting the post-improvements-round
+  state (no longer claiming Phase-7-in-progress), a Tech Stack table
+  aimed at the contributor audience, and a Contributing section
+  pointing to `CLAUDE.md` as the deep technical reference. The Planning
+  Documents section now points to `app-planning/08-improvements-round.md`
+  as the current active scope doc and
+  `app-planning/archive/v7.0.0-phase-prds/` for the historical Phase
+  1-7 set, replacing the stale direct links to the old top-level PRD
+  paths.
+
+  Key Files Modified:
+    README.md — full rewrite
+
+  Verification:
+    Documentation-only change — no source under `src/` touched, so
+    `npm run typecheck`/`lint`/`test` were not re-run for this entry
+    (nothing they cover changed; the prior IR9 entry already confirmed
+    all three green against the current source tree). Verified the
+    `public/favicon.svg` relative path resolves correctly from the repo
+    root (where README.md lives), and that section anchors referenced
+    in the in-page table of links (`#quick-start`, `#tech-stack`,
+    `#contributing`) match the headings' expected GitHub-generated
+    slugs. Did not render this through GitHub itself to visually
+    confirm — recommend a quick look at the rendered page once pushed.
+
+  Next Step: Improvements Round complete — all ten items (IR1-IR10)
+  done. Every acceptance criterion in
+  `app-planning/08-improvements-round.md` is met.
+
+=== Version bumped to 7.7.1 (18/08/2026) — classification: PATCH ===
