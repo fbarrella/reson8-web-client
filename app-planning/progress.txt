@@ -4110,3 +4110,75 @@ Feature/Fix: Phase 7 — P7.7: real-device results, Android tablet + iPad
   version-bump marker immediately following this entry.
 
 === Version bumped to 7.0.0 (18/08/2026) — classification: MAJOR ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — setup: archive v7.0.0 PRDs, write the
+improvements-round PRD
+
+  Problem: v7.0.0 is live and has now been used against a real server;
+  real usage surfaced nine concrete defects/polish gaps (NSFW-prompt
+  bypass, missing NSFW badges in one tab, custom-emoji reactions
+  rendering as text, wrong reaction/emoji-picker icon, duplicate/missing/
+  misrouted voice sound alerts, no in-app logo, and a mobile
+  camera-only attachment picker). The Phase 1-7 PRD set (master PRD +
+  seven phase PRDs) is now historical — it documents how v7.0.0 was
+  built, not what this next round of work is. Continuing to treat those
+  files as the "current" scope doc (per CLAUDE.md's old pointer) would
+  be actively misleading for this round.
+
+  Solution: Moved the entire Phase 1-7 PRD set (`00-master-prd.md`
+  through `07-phase7-pwa-platform-polish.md`, plus
+  `P7.7-real-device-checklist.md`) into
+  `app-planning/archive/v7.0.0-phase-prds/` via `git mv`, preserving
+  them verbatim as the historical record for that work's rationale.
+  Wrote `app-planning/08-improvements-round.md` as the new active PRD:
+  nine numbered items (IR1-IR9), each grounded in an actual root-cause
+  investigation of the current source (file/line references, not
+  guesses) rather than restating the bug reports, plus a tenth item
+  (IR10, README rewrite) scoped to run last, after every fix lands.
+  One originally-requested item (displaying the connected server's
+  registered name in the top bar) was investigated and dropped: the
+  `reson8` server does store a `name` (via `SERVER_NAME`, in the
+  `IServer` DTO) but no Socket.io event/ack currently sends it to a
+  connected client (`USER_JOIN_SERVER`'s ack is
+  `{success, serverId?, error?}` only) — shipping it would require a
+  server-side protocol change, which conflicts with this repo's
+  confirmed non-goal #1. Confirmed with the product owner to drop it
+  rather than build a server-side stub.
+
+  Patched `CLAUDE.md`'s status line and PRD-pointer paragraph (previous
+  wording pointed at `app-planning/00-master-prd.md` and
+  `0N-phase*.md`, now both moved) to point at the new active PRD and
+  the archive location instead, so the file stays self-sufficient
+  rather than silently stale.
+
+  Also created ten tracked tasks (this session's task list) mirroring
+  the PRD's IR1-IR10 breakdown, to work through one at a time with an
+  explicit stop-and-confirm between each, per the user's requested
+  process for this round.
+
+  Key Files Modified:
+    app-planning/08-improvements-round.md (NEW)
+    app-planning/archive/v7.0.0-phase-prds/00-master-prd.md (moved)
+    app-planning/archive/v7.0.0-phase-prds/01-phase1-foundation-connection.md (moved)
+    app-planning/archive/v7.0.0-phase-prds/02-phase2-voice-core.md (moved)
+    app-planning/archive/v7.0.0-phase-prds/03-phase3-advanced-voice-channel-mgmt.md (moved)
+    app-planning/archive/v7.0.0-phase-prds/04-phase4-text-chat-messaging.md (moved)
+    app-planning/archive/v7.0.0-phase-prds/05-phase5-direct-messages-social.md (moved)
+    app-planning/archive/v7.0.0-phase-prds/06-phase6-admin-moderation.md (moved)
+    app-planning/archive/v7.0.0-phase-prds/07-phase7-pwa-platform-polish.md (moved)
+    app-planning/archive/v7.0.0-phase-prds/P7.7-real-device-checklist.md (moved)
+    CLAUDE.md — status line, PRD-pointer paragraph
+
+  Verification:
+    Documentation/planning-only change — no source under `src/` touched,
+    so `npm run typecheck`/`lint`/`test` were not re-run for this entry
+    (nothing they cover changed). Verified via `git status` that every
+    archived file moved cleanly with no content loss (git-detected
+    renames, not delete+add).
+
+  Next Step: IR1 — make the NSFW confirmation dialog always prompt, from
+  both the channel tree and the Chats tab.
+
+=== Version bumped to 7.0.1 (18/08/2026) — classification: PATCH ===
