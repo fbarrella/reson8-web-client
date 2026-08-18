@@ -115,84 +115,102 @@ function ChannelRow({ node, depth }: { node: IChannelTreeNode; depth: number }) 
   return (
     <li>
       <div
-        role="button"
-        tabIndex={0}
-        aria-current={isCurrentVoiceChannel ? "true" : undefined}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
-        className={cn(
-          "flex min-h-11 w-full items-center gap-2 rounded-md py-2 pr-2 text-sm",
-          "hover:bg-accent hover:text-accent-foreground",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          isCurrentVoiceChannel && "bg-accent/60 text-accent-foreground",
-        )}
-        onClick={renaming ? undefined : handleClick}
+        className="flex min-h-11 w-full items-center gap-2 rounded-md py-2 pr-2 text-sm"
         onPointerDown={renaming ? undefined : startLongPress}
         onPointerUp={cancelLongPress}
         onPointerLeave={cancelLongPress}
         onPointerCancel={cancelLongPress}
-        onKeyDown={(e) => {
-          if (renaming) return;
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            (e.currentTarget as HTMLElement).click();
-          }
-        }}
       >
-        {hasChildren ? (
-          expanded ? (
-            <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-          )
-        ) : (
-          <span className="w-4 shrink-0" />
-        )}
-
-        {isVoice ? (
-          <Volume2 className="size-4 shrink-0 text-muted-foreground" />
-        ) : (
-          <Hash className="size-4 shrink-0 text-muted-foreground" />
-        )}
-
         {renaming ? (
-          <input
-            ref={renameInputRef}
-            value={renameValue}
-            onClick={(e) => e.stopPropagation()}
-            onChange={(e) => setRenameValue(e.target.value)}
-            onBlur={commitRename}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitRename();
-              if (e.key === "Escape") {
-                setRenameValue(node.name);
-                setRenaming(false);
-              }
-            }}
-            className="min-w-0 flex-1 rounded-md border border-input bg-transparent px-1.5 py-0.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            {hasChildren ? (
+              expanded ? (
+                <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+              )
+            ) : (
+              <span className="w-4 shrink-0" />
+            )}
+            {isVoice ? (
+              <Volume2 className="size-4 shrink-0 text-muted-foreground" />
+            ) : (
+              <Hash className="size-4 shrink-0 text-muted-foreground" />
+            )}
+            <input
+              ref={renameInputRef}
+              value={renameValue}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onBlur={commitRename}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitRename();
+                if (e.key === "Escape") {
+                  setRenameValue(node.name);
+                  setRenaming(false);
+                }
+              }}
+              className="min-w-0 flex-1 rounded-md border border-input bg-transparent px-1.5 py-0.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
         ) : (
-          <span className="flex-1 truncate">{node.name}</span>
-        )}
+          // A real <button>, not a nested div[role=button] — the kebab menu
+          // below is a sibling, not a descendant, so screen readers never see
+          // one interactive control nested inside another (axe: nested-interactive).
+          <button
+            type="button"
+            aria-current={isCurrentVoiceChannel ? "true" : undefined}
+            className={cn(
+              "flex min-w-0 flex-1 items-center gap-2 rounded-md text-left",
+              "hover:bg-accent hover:text-accent-foreground",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              isCurrentVoiceChannel && "bg-accent/60 text-accent-foreground",
+            )}
+            onClick={handleClick}
+          >
+            {hasChildren ? (
+              expanded ? (
+                <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+              )
+            ) : (
+              <span className="w-4 shrink-0" />
+            )}
 
-        {node.isNsfw && (
-          <Badge variant="destructive" className="shrink-0">
-            18+
-          </Badge>
-        )}
+            {isVoice ? (
+              <Volume2 className="size-4 shrink-0 text-muted-foreground" />
+            ) : (
+              <Hash className="size-4 shrink-0 text-muted-foreground" />
+            )}
 
-        {!isVoice && !hasChildren && isUnread && (
-          <span
-            aria-label="Unread messages"
-            className="size-2 shrink-0 rounded-full bg-primary"
-          />
-        )}
+            <span className="flex-1 truncate">{node.name}</span>
 
-        {joining && (
-          <span aria-label="Joining…" className="size-3 shrink-0 animate-pulse rounded-full bg-primary" />
-        )}
+            {node.isNsfw && (
+              <Badge variant="destructive" className="shrink-0">
+                18+
+              </Badge>
+            )}
 
-        {isVoice && node.occupants.length > 0 && (
-          <span className="shrink-0 text-xs text-muted-foreground">{node.occupants.length}</span>
+            {!isVoice && !hasChildren && isUnread && (
+              <>
+                <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-primary" />
+                <span className="sr-only">Unread messages</span>
+              </>
+            )}
+
+            {joining && (
+              <>
+                <span aria-hidden="true" className="size-3 shrink-0 animate-pulse rounded-full bg-primary" />
+                <span className="sr-only">Joining…</span>
+              </>
+            )}
+
+            {isVoice && node.occupants.length > 0 && (
+              <span className="shrink-0 text-xs text-muted-foreground">{node.occupants.length}</span>
+            )}
+          </button>
         )}
 
         {canManageChannels && !renaming && (
@@ -235,9 +253,24 @@ function ChannelRow({ node, depth }: { node: IChannelTreeNode; depth: number }) 
                 {initials(occupant.nickname)}
               </span>
               <span className="truncate">{occupant.nickname}</span>
-              {occupant.isDeafened && <span aria-label="Deafened">🔇</span>}
-              {!occupant.isDeafened && occupant.isMuted && <span aria-label="Muted">🔈</span>}
-              {occupant.isAway && <span aria-label="Away">💤</span>}
+              {occupant.isDeafened && (
+                <>
+                  <span aria-hidden="true">🔇</span>
+                  <span className="sr-only">Deafened</span>
+                </>
+              )}
+              {!occupant.isDeafened && occupant.isMuted && (
+                <>
+                  <span aria-hidden="true">🔈</span>
+                  <span className="sr-only">Muted</span>
+                </>
+              )}
+              {occupant.isAway && (
+                <>
+                  <span aria-hidden="true">💤</span>
+                  <span className="sr-only">Away</span>
+                </>
+              )}
             </li>
             );
           })}

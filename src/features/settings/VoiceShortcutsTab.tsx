@@ -230,7 +230,7 @@ function NoiseGateSection() {
       </p>
       <MicLevelMeter levelDb={levelDb} thresholdDb={noiseGateEnabled ? noiseGateThresholdDb : undefined} />
       {previewError && !inActiveSession && (
-        <p className="mt-1 text-xs text-destructive">{previewError}</p>
+        <p className="mt-1 text-xs text-destructive-text">{previewError}</p>
       )}
       <div className="mt-3">
         <div className="mb-1.5 flex items-center justify-between">
@@ -238,6 +238,7 @@ function NoiseGateSection() {
           <span className="text-xs text-muted-foreground">{Math.round(noiseGateThresholdDb)} dB</span>
         </div>
         <Slider
+          aria-label="Noise gate threshold"
           value={[noiseGateThresholdDb]}
           min={-60}
           max={0}

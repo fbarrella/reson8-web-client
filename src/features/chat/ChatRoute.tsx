@@ -70,7 +70,10 @@ export function ChatRoute() {
                   <Hash className="size-3.5" />
                   <span className="max-w-32 truncate">{tabNode?.name ?? id}</span>
                   {unreadChannelIds.has(id) && id !== channelId && (
-                    <span aria-label="Unread" className="size-1.5 shrink-0 rounded-full bg-primary" />
+                    <>
+                      <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-primary" />
+                      <span className="sr-only">Unread</span>
+                    </>
                   )}
                   <button
                     type="button"

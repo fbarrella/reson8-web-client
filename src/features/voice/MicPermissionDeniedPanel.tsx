@@ -29,7 +29,7 @@ function detectPlatformGuidance(): string {
 export function MicPermissionDeniedPanel({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="flex flex-col items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-center">
-      <MicOff className="size-8 text-destructive" />
+      <MicOff className="size-8 text-destructive-text" />
       <div>
         <p className="text-sm font-medium text-foreground">Microphone access is blocked</p>
         <p className="mt-1 text-sm text-muted-foreground">{detectPlatformGuidance()}</p>

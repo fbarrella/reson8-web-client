@@ -44,7 +44,10 @@ export function ChatTabPage() {
               <Hash className="size-4 shrink-0 text-muted-foreground" />
               <span className="flex-1 truncate">{node.name}</span>
               {unreadChannelIds.has(id) && (
-                <span aria-label="Unread" className="size-2 shrink-0 rounded-full bg-primary" />
+                <>
+                  <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-primary" />
+                  <span className="sr-only">Unread</span>
+                </>
               )}
             </button>
           </li>

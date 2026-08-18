@@ -91,7 +91,12 @@ export function VoicePanel() {
               {!occupant.isDeafened && occupant.isMuted && (
                 <MicOff className="size-4 shrink-0 text-muted-foreground" aria-label="Muted" />
               )}
-              {occupant.isAway && <span aria-label="Away">💤</span>}
+              {occupant.isAway && (
+                <>
+                  <span aria-hidden="true">💤</span>
+                  <span className="sr-only">Away</span>
+                </>
+              )}
               {occupant.nickname !== selfNickname && currentChannelId && (
                 <OccupantActionsPopover
                   userId={occupant.userId}

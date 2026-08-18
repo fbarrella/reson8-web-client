@@ -248,7 +248,14 @@ export function CustomEmojiUploadDialog({ open, onOpenChange }: { open: boolean;
 
               <div>
                 <span className="mb-1 block text-xs text-muted-foreground">Zoom</span>
-                <Slider value={[zoom]} min={1} max={3} step={0.01} onValueChange={([v]) => v !== undefined && applyZoom(v)} />
+                <Slider
+                  aria-label="Zoom"
+                  value={[zoom]}
+                  min={1}
+                  max={3}
+                  step={0.01}
+                  onValueChange={([v]) => v !== undefined && applyZoom(v)}
+                />
               </div>
 
               <div className="flex flex-col gap-1.5">

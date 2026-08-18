@@ -32,31 +32,37 @@ export function VoiceMiniBar() {
     status === "joining" ? "Joining…" : status === "reconnecting" ? "Reconnecting…" : (timer ?? "00:00");
 
   return (
-    <button
-      type="button"
-      onClick={() => setVoicePanelOpen(true)}
+    // A plain wrapper, not a <button> — the mute/deafen/leave Buttons below
+    // are siblings, not nested descendants, so screen readers never see one
+    // interactive control nested inside another (axe: nested-interactive;
+    // same fix as ChannelTreePanel's ChannelRow).
+    <div
       className={cn(
-        "flex h-14 shrink-0 items-center gap-3 border-t border-border bg-card px-3 text-left lg:hidden",
+        "flex h-14 shrink-0 items-center gap-3 border-t border-border bg-card px-3 lg:hidden",
         status === "reconnecting" && "animate-pulse",
       )}
     >
-      <Volume2 className="size-5 shrink-0 text-primary" aria-hidden />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium text-foreground">
-          {node?.name ?? "Voice"}
+      <button
+        type="button"
+        aria-label="Expand voice panel"
+        onClick={() => setVoicePanelOpen(true)}
+        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+      >
+        <Volume2 className="size-5 shrink-0 text-primary" aria-hidden />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-foreground">
+            {node?.name ?? "Voice"}
+          </span>
+          <span className="block text-xs text-muted-foreground">{statusText}</span>
         </span>
-        <span className="block text-xs text-muted-foreground">{statusText}</span>
-      </span>
+      </button>
 
       <Button
         type="button"
         variant="ghost"
         size="icon"
         aria-label={isMuted ? "Unmute" : "Mute"}
-        onClick={(e) => {
-          e.stopPropagation();
-          toggleMute();
-        }}
+        onClick={toggleMute}
       >
         {isMuted ? <MicOff className="size-5" /> : <Mic className="size-5" />}
       </Button>
@@ -65,25 +71,13 @@ export function VoiceMiniBar() {
         variant="ghost"
         size="icon"
         aria-label={isDeafened ? "Undeafen" : "Deafen"}
-        onClick={(e) => {
-          e.stopPropagation();
-          toggleDeafen();
-        }}
+        onClick={toggleDeafen}
       >
         {isDeafened ? <VolumeX className="size-5" /> : <Volume2 className="size-5" />}
       </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        aria-label="Leave voice"
-        onClick={(e) => {
-          e.stopPropagation();
-          leaveVoiceChannel();
-        }}
-      >
+      <Button type="button" variant="ghost" size="icon" aria-label="Leave voice" onClick={leaveVoiceChannel}>
         <PhoneOff className="size-5" />
       </Button>
-    </button>
+    </div>
   );
 }

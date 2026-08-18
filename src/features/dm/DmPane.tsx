@@ -11,9 +11,10 @@ function DmPartnerBar({ partnerId }: { partnerId: string }) {
   return (
     <div className="flex min-h-11 items-center gap-2 border-b border-border px-3 py-2">
       <span
-        aria-label={partner?.isOnline ? "Online" : "Offline"}
+        aria-hidden="true"
         className={`size-2 shrink-0 rounded-full ${partner?.isOnline ? "bg-success" : "bg-muted-foreground/40"}`}
       />
+      <span className="sr-only">{partner?.isOnline ? "Online" : "Offline"}</span>
       <span className="flex-1 truncate text-sm font-medium text-foreground">
         {partner?.nickname ?? "Direct Message"}
       </span>

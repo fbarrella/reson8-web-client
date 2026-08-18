@@ -27,7 +27,12 @@ export function EmojiPicker({
     <>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-        <PopoverContent align={align} className="w-auto p-0" onClick={(e) => e.stopPropagation()}>
+        <PopoverContent
+          align={align}
+          className="w-auto p-0"
+          aria-label="Emoji picker"
+          onClick={(e) => e.stopPropagation()}
+        >
           <EmojiPickerContent
             onSelectEmoji={(emoji) => {
               onPick(emoji);

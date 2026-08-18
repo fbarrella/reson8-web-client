@@ -25,7 +25,7 @@ export function Toaster() {
           className={cn(
             "pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-lg border p-4 shadow-lg lg:w-96",
             t.variant === "destructive"
-              ? "border-destructive/50 bg-destructive/10 text-destructive"
+              ? "border-destructive/50 bg-destructive/10 text-destructive-text"
               : "border-border bg-card text-card-foreground",
           )}
         >

@@ -50,9 +50,10 @@ function UserRow({ user, onSelect }: { user: IOnlineUser; onSelect: (userId: str
         className="flex min-h-11 flex-1 items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-accent"
       >
         <span
-          aria-label={user.isOnline ? "Online" : "Offline"}
+          aria-hidden="true"
           className={`size-2 shrink-0 rounded-full ${user.isOnline ? "bg-success" : "bg-muted-foreground/40"}`}
         />
+        <span className="sr-only">{user.isOnline ? "Online" : "Offline"}</span>
         <span className="flex-1 truncate">{user.nickname}</span>
       </button>
 
@@ -61,7 +62,7 @@ function UserRow({ user, onSelect }: { user: IOnlineUser; onSelect: (userId: str
           type="button"
           aria-label={`Ban ${user.nickname}`}
           onClick={() => setConfirmingBan(true)}
-          className="flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-destructive"
+          className="flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-destructive-text"
         >
           <Ban className="size-4" />
         </button>

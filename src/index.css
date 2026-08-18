@@ -36,6 +36,12 @@
      on small text (axe color-contrast, WCAG needs 4.5:1) */
   --destructive: oklch(0.5 0.2 25);
   --destructive-foreground: oklch(0.96 0.005 285);
+  /* Separate token for destructive TEXT rendered directly on --card/--background
+     (form errors, destructive icons/menu items) — --destructive itself is tuned
+     for the opposite pairing (light text ON a --destructive fill) and is too dark
+     to pass 4.5:1 as foreground text against this app's dark surfaces (P7.5 axe
+     color-contrast audit). */
+  --destructive-text: oklch(0.68 0.19 25);
 
   --success: oklch(0.72 0.17 145);
   --warning: oklch(0.78 0.16 80);
@@ -66,6 +72,7 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-text: var(--destructive-text);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-border: var(--border);

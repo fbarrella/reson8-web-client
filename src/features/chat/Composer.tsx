@@ -129,7 +129,7 @@ export function Composer({
               <button
                 type="button"
                 onClick={() => void runUpload(attachment.file, attachment.previewUrl)}
-                className="flex items-center gap-1 text-xs text-destructive hover:underline"
+                className="flex items-center gap-1 text-xs text-destructive-text hover:underline"
               >
                 <RotateCw className="size-3" /> Upload failed — retry
               </button>

@@ -3174,3 +3174,260 @@ Feature/Fix: Phase 7 — P7.4: Badging & Vibration API lifecycle audit
 
   Next Step: P7.5 — accessibility gate (axe-core audit across every
   route/surface).
+
+--- Entry: 17/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.5: Accessibility gate (axe-core audit across every
+route/surface)
+
+  Problem: Every Phase 7 item so far had been verified live, but no
+  comprehensive `axe-core` pass had been run across the app since Phase 1's
+  P1.6 basic sweep (connect screen only). This phase's own PRD wording treats
+  "zero automated violations" as a launch-blocking gate, not a target — the
+  job was to audit every route/surface named in the PRD (connect screen, app
+  shell at all 3 breakpoints, every Settings tab, every modal/sheet, the
+  voice panel, chat composer + emoji picker, admin surfaces) and fix whatever
+  it found, not just run the tool once and report a number.
+
+  Solution: `@axe-core/playwright` was already a devDependency (^4.13.0,
+  pre-installed before this session, confirmed via `package.json`) with one
+  existing test (`e2e/accessibility.spec.ts`, connect-screen only). Rather
+  than trying to force the full authenticated-app surface list into that
+  committed Playwright-runner spec (most of it needs a live Socket.io
+  connection, which this repo's e2e config has never depended on — the
+  committed spec only exercises the pre-connection connect screen), this
+  session followed the same pattern established by every prior Phase 7 item:
+  a throwaway `axe-audit.mjs` script under scratchpad, driving two real
+  connected clients (an admin + a member instance, mock server started with
+  `MOCK_ADMIN_NICKNAME=AxeAdmin`) against the built app via `playwright-core`
+  + `AxeBuilder`, walking every PRD-named surface and calling `.analyze()` at
+  each state. `e2e/accessibility.spec.ts` itself was left as-is (still the
+  right, minimal thing to commit — it's the one surface reachable without a
+  live server).
+
+  Iterated the live audit script to completion across 33 distinct
+  surface/breakpoint states with **zero violations remaining on every one**:
+  connect screen (base/md/lg, password-visible, validation-error states),
+  app shell channel list (base/md/lg), the md channel drawer, a real chat
+  channel with composer + open emoji picker + a sent message, the message
+  actions menu + its delete-confirm AlertDialog, the NSFW channel
+  confirmation dialog, the DMs list (empty and with-unread), the Online
+  Users dialog, a DM thread with a real message (both sides), the voice
+  panel as both the mobile full-screen sheet and the lg persistent pane, the
+  occupant actions popover (kick/mute), and all 7 Settings tabs (About,
+  Application, Roles, Emojis, Server, Voice & Shortcuts, Audio) at both base
+  and the lg layout, including non-empty states for Emojis (seeded a
+  PENDING emoji via a new scratch-only mock-server test route,
+  `/test/create-pending-emoji/:name`, mirroring the existing
+  `/test/approve-emoji/:name` pattern) and Roles (an expanded user row).
+
+  Real violations found and fixed (not test-script noise — each was a
+  genuine defect, confirmed by re-running the audit clean afterward):
+
+  1. **color-contrast** (connect screen validation errors): `text-destructive`
+     used directly as foreground text on `--card`/`--background` only hit
+     ~2.8:1 — `--destructive` was tuned in an earlier phase specifically for
+     the *opposite* pairing (light text ON a `--destructive` fill, e.g.
+     buttons/badges), not for use as plain text on a dark surface. Added a
+     new `--destructive-text: oklch(0.68 0.19 25)` token (paired
+     `--color-destructive-text` theme mapping) and swapped every plain-text
+     usage (form errors, destructive dropdown items, destructive icons, the
+     toaster's error variant, DM "Ban" hover state) from `text-destructive`
+     to `text-destructive-text` — left every actual fill usage
+     (`bg-destructive` buttons/badges) untouched, since that pairing was
+     already correct.
+
+  2. **nested-interactive** (channel list, every breakpoint; voice mini-bar):
+     `ChannelRow` (ChannelTreePanel.tsx) wrapped its whole clickable row in a
+     `<div role="button">` that also contained `ChannelActionsMenu`'s real
+     `<button>` kebab trigger — one interactive control nested inside
+     another. Restructured so the outer element is a plain (non-interactive)
+     `<div>` and the row's own click/keyboard-activation target is a real
+     sibling `<button>` (dropped the manual `onKeyDown` Enter/Space handler
+     entirely — a native `<button>` gets that for free). Same exact bug and
+     fix shape in `VoiceMiniBar.tsx`: the outer `<button onClick={expand}>`
+     wrapped three more `<Button>`s (Mute/Deafen/Leave); split into a plain
+     wrapper `<div>` + a sibling `<button aria-label="Expand voice panel">`
+     covering just the tap-to-expand area, with the three action buttons as
+     siblings (their `e.stopPropagation()` calls were dead code afterward
+     and removed).
+
+  3. **aria-dialog-name** (emoji picker popover) / and the same **modal
+     side effects** on Radix `DropdownMenu`: Radix's `Popover.Content`
+     renders `role="dialog"` with no accessible name by default — added
+     `aria-label="Emoji picker"` / `aria-label={\`Actions for ${nickname}\`}`
+     to the two `PopoverContent` usages (EmojiPicker, OccupantActionsPopover).
+     Separately, and more significantly: Radix `DropdownMenu`'s default
+     `modal={true}` correctly aria-hides the rest of the page while open
+     (as verified — this is real, working "hide others" behavior, not a
+     bug) but the surrounding page content (Settings button, `<main>`, the
+     bottom tab bar) was still fully *focusable* while hidden — a real
+     **aria-hidden-focus** violation, which cascaded into **landmark-one-main**
+     and **page-has-heading-one** failing too (the app's only `<main>` and
+     only `<h1>` both live inside that hidden wrapper). A 3-item kebab menu
+     doesn't need true modal/focus-trap semantics — set `modal={false}` on
+     all three real `<DropdownMenu>` usages (ChannelActionsMenu, MessageRow,
+     DmMessageRow), each with a comment explaining why. This alone fixed 3
+     of the 4 combined violations; the 4th (**region** — the portaled
+     `DropdownMenuContent` wrapper isn't contained by any landmark) was
+     fixed by dropping `DropdownMenuPrimitive.Portal` from the shared
+     `components/ui/dropdown-menu.tsx` entirely: Radix's Popper positioning
+     is `position: fixed` regardless of Portal use, so visual
+     placement/escaping-ancestor-clipping is unaffected (confirmed via a
+     screenshot with the message-row kebab open inside the scrollable
+     message list — no clipping), but the content is now a DOM descendant
+     of `<main>` instead of `document.body`, satisfying the landmark check
+     for real rather than suppressing the rule.
+
+  4. **aria-prohibited-attr** (DM thread, and — once specifically checked —
+     the two other places with the identical shape): a bare `<span
+     aria-label="Online"/"Offline">` decorative dot. `<span>`'s implicit
+     ARIA role is "generic", which per spec *prohibits* naming properties
+     (`aria-label`/`aria-labelledby`) regardless of content — this wasn't
+     reachable via the audit's own "Online Users dialog" state (that state
+     was captured before the async user-list fetch resolved, so the
+     identical span in `OnlineUsersDialog.tsx` never actually got exercised
+     there) but is the same defect. Fixed all three occurrences
+     (`OnlineUsersDialog.tsx`, `DmsListPage.tsx`, `DmPane.tsx`) by making the
+     dot `aria-hidden="true"` and adding an adjacent `sr-only` text span for
+     the actual "Online"/"Offline" announcement. Proactively swept the rest
+     of the codebase for the same anti-pattern (decorative
+     dot/emoji-plus-`aria-label` — this had clearly been copy-pasted several
+     times) and fixed every other instance the same way: unread-message dots
+     in `ChannelTreePanel.tsx`, `ChatRoute.tsx`, `ChatTabPage.tsx`,
+     `DmRoute.tsx`, `BottomTabBar.tsx`; the "Joining…" dot and
+     Deafened/Muted/Away emoji spans in `ChannelTreePanel.tsx` and
+     `VoicePanel.tsx`. `AppHeader.tsx`'s DM NavLink was a special case (it
+     already carries its own explicit `aria-label="Direct Messages"`, which
+     overrides all descendant content including a sibling `sr-only` span) —
+     fixed by folding the unread state directly into that label instead:
+     `aria-label={hasUnreadDms ? "Direct Messages (unread)" : "Direct
+     Messages"}`.
+
+  5. **aria-input-field-name** (Voice & Shortcuts tab, Audio tab, Settings
+     lg layout): the shared `Slider` component (`components/ui/slider.tsx`)
+     never forwarded an accessible name to Radix's `SliderPrimitive.Thumb`
+     (the actual `role="slider"` element) — every slider in the app was an
+     unlabeled input field. Added an `aria-label` prop to `Slider`, forwarded
+     to each `Thumb`, and set it at every call site: noise-gate threshold
+     (VoiceShortcutsTab), the three volume rows (AudioTab: Voice Chat/Alert/
+     Nudge Volume), per-occupant volume (OccupantActionsPopover), and the
+     emoji-crop zoom slider (CustomEmojiUploadDialog) — found by grepping
+     for every `<Slider` usage after fixing the first one, not just the ones
+     the live audit happened to reach.
+
+  6. **region** (mobile voice panel sheet): the base/md full-screen
+     `voicePanelOpen` sheet in `AppShell.tsx` had no `role`/landmark at all,
+     despite being functionally identical to `SettingsSheet` (full-screen,
+     has its own heading + Close button). Brought it up to the same modal
+     contract `SettingsSheet` already uses: `role="dialog" aria-modal="true"
+     aria-labelledby="voice-panel-heading"`, a focus-on-open + Escape-to-close
+     `useEffect` (this sheet previously had *no* Escape handler at all —
+     every other modal in this codebase already supports it, per the P7.3
+     entry's own note), and `tabIndex={-1}` on the panel for the initial
+     focus target.
+
+  Test-script-only issues fixed along the way (not product bugs — noted
+  here since they're exactly the kind of trap a future live-verification
+  session in this repo will hit again otherwise): (a) `page.goto()` to an
+  already-connected `/app/*` path performs a hard reload, which silently
+  drops the in-memory-only `connectionStore` and redirects to `/connect` —
+  several early script iterations were unknowingly auditing the connect
+  screen a second time and reporting false "PASS"es for app-shell states;
+  fixed by routing all post-connect navigation through the bottom tab bar's
+  real links, and added an `assertConnected()` guard that throws if a
+  surface-under-audit is unexpectedly back on `/connect`. (b) An unscoped
+  `getByText("AxeAdmin")` / `getByRole("link", { name: "DMs", exact: true
+  })` can resolve to a same-text element that's still in the DOM but
+  legitimately hidden behind an open modal (confirmed via `aria-hidden`
+  inspection — not itself a bug) or whose accessible name changed once an
+  unread-badge `sr-only` span got added inside it (a direct, expected side
+  effect of fix #4 above) — fixed by scoping locators to the open
+  `[role="dialog"]` / matching by stable `href` instead of exact visible
+  text.
+
+  Manual supplements (per the PRD, for what `axe-core` can't catch):
+    - **Keyboard-only navigation**: a separate script Tab'd through the
+      connect screen (6 focusables, no trap, reaches the input and Connect
+      button), the connected app shell's channels list (10 focusables, no
+      trap, reaches Settings and every bottom tab), confirmed the
+      restructured `ChannelRow` button activates via Enter (navigates to
+      the channel, exactly as the old `onClick`-on-a-div version did, now
+      via native semantics instead of a manual keydown handler), and opened
+      + Tab'd through + Escaped the Settings sheet entirely via keyboard
+      (Tab order stayed within the sheet's own controls across the range
+      tested; Escape closed it and returned `document.activeElement` to
+      nothing stuck/trapped). Not tested via keyboard: the full DM/emoji-
+      picker/voice-panel keyboard flows specifically — covered indirectly
+      by the axe pass's structural checks (correct roles/tab order
+      primitives) but not walked start-to-finish with a real Tab sequence
+      this session.
+    - **Color-contrast spot-check against `src/index.css`'s final tokens**:
+      a script rendered every meaningful foreground/background token pair
+      (17 pairs — `--foreground`/`--card-foreground`/`--popover-foreground`
+      on their surfaces, `--muted-foreground`, the new
+      `--destructive-text`, `--destructive-foreground` on `--destructive`,
+      `--primary`/`--primary-foreground`, `--success`, `--warning`,
+      `--accent-foreground`, `--secondary-foreground`) and computed real
+      WCAG contrast ratios. First attempt produced nonsense ~1:1 ratios for
+      *every* pair — this Chromium build's `getComputedStyle().color`
+      returns the color verbatim in whatever function it was authored in
+      (`oklch(0.96 0.005 285)`), and naively regexing the first 3 numbers
+      out of that string reads it as `rgb(0.96, 0.005, 285)`. Fixed by
+      resolving every color through a 1x1 canvas `fillStyle` round-trip
+      (canvas rendering always normalizes to concrete sRGB regardless of
+      input color space) before computing luminance. All 17 pairs pass
+      WCAG AA's 4.5:1 normal-text threshold once correctly measured (5.88–
+      17.54:1 range) — `--success`/`--warning`/`--primary` as plain text
+      were already fine and needed no changes; only `--destructive-text`
+      (new, fix #1 above) was actually broken.
+    - **Screen-reader smoke test**: **not performed.** This sandbox is
+      headless with no VoiceOver/TalkBack available — consistent with every
+      prior Phase 7 entry's honesty about real-device gaps, this is
+      explicitly flagged as unverified rather than assumed-fine, and
+      remains deferred to P7.7's real-device pass.
+
+  Key Files Modified:
+    src/index.css — new --destructive-text token + theme mapping
+    src/components/ui/dropdown-menu.tsx — modal-less Content, dropped Portal
+    src/components/ui/slider.tsx — forwards aria-label to Thumb
+    src/components/ui/toaster.tsx — text-destructive-text swap
+    src/app/AppShell.tsx — voice sheet role=dialog/focus/Escape, aside
+      landmark for the lg pane, aria-hidden background while
+      drawer/voice-panel sheet is open
+    src/app/AppHeader.tsx, src/app/BottomTabBar.tsx — unread-badge
+      aria-hidden+sr-only fixes
+    src/features/channels/ChannelTreePanel.tsx — ChannelRow
+      nested-interactive restructure, decorative-span fixes
+    src/features/channels/ChannelActionsMenu.tsx — modal={false}
+    src/features/channels/CreateChannelDialog.tsx — text-destructive-text
+    src/features/chat/{ChatRoute,ChatTabPage,MessageRow,Composer}.tsx —
+      unread-dot fixes, modal={false}, text-destructive-text
+    src/features/dm/{DmRoute,DmsListPage,DmPane,OnlineUsersDialog,
+      DmMessageRow}.tsx — decorative-span fixes, modal={false}
+    src/features/emoji/{EmojiPicker,CustomEmojiUploadDialog}.tsx —
+      aria-label on Popover content / Slider
+    src/features/settings/{AudioTab,VoiceShortcutsTab}.tsx — Slider
+      aria-label, text-destructive-text
+    src/features/voice/{VoiceMiniBar,VoicePanel,OccupantActionsPopover,
+      MicPermissionDeniedPanel}.tsx — nested-interactive restructure,
+      decorative-span fix, Slider/Popover aria-label, text-destructive-text
+    e2e/accessibility.spec.ts — unchanged (still connect-screen-only; see
+      Solution above for why the comprehensive pass stayed a scratch script)
+
+  Verification:
+    npm run typecheck / lint / test (33/33) / build all pass after every
+    round of fixes. Live `axe-core` pass via the scratch `axe-audit.mjs`
+    script (two real connected clients against the built app + mock
+    server, `playwright-core` + `@axe-core/playwright`): 33/33 surfaces
+    clean on the final run, zero violations anywhere. A follow-up
+    screenshot pass (`screenshot.mjs`) visually confirmed the three
+    structurally-restructured surfaces (channel list, voice mini-bar,
+    message actions menu) still render and lay out correctly — no visual
+    regression from the nested-interactive/Portal-removal fixes. Keyboard-
+    only and color-contrast manual supplements per above; screen-reader
+    smoke test explicitly not performed (sandbox limitation, deferred to
+    P7.7).
+
+  Next Step: P7.6 — Performance budget (Lighthouse CI, code-splitting,
+  bundle-size budget).
