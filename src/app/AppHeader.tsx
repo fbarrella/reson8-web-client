@@ -31,7 +31,10 @@ export function AppHeader() {
         <Menu className="size-5" />
       </Button>
 
-      <h1 className="text-sm font-semibold text-foreground">Reson8</h1>
+      <div className="flex items-center gap-2">
+        <img src="/favicon.svg" alt="" aria-hidden="true" className="size-6" />
+        <h1 className="text-sm font-semibold text-foreground">Reson8</h1>
+      </div>
 
       <div className="flex items-center gap-3">
         <LatencyIndicator />

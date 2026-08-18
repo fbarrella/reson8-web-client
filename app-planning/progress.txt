@@ -4502,3 +4502,48 @@ sound routing
   name.
 
 === Version bumped to 7.5.0 (18/08/2026) — classification: MINOR ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — IR8: add the Reson8 logo to the top
+bar
+
+  Problem: The app had no visible branding/logo anywhere in the UI
+  itself — only in the browser tab (favicon) and the installed-PWA
+  icon.
+
+  Solution: `public/favicon.svg` already *is* the Reson8 logo (the same
+  purple abstract wordmark `../reson8/logo_512x512.png` and the desktop
+  client's `logo.png` use, already vendored into this repo's `public/`)
+  — a rendering gap, not an asset gap. Rendered it in `AppHeader.tsx` as
+  a plain `<img src="/favicon.svg" alt="" aria-hidden="true"
+  className="size-6" />` immediately to the left of the existing
+  `<h1>Reson8</h1>`, both wrapped in a small flex container so they sit
+  inline. `alt=""`/`aria-hidden` since the adjacent heading text already
+  conveys the app name to assistive tech — the logo is purely
+  decorative here, no redundant announcement needed. Referenced by
+  absolute path (`/favicon.svg`) rather than an imported module, since
+  it lives in `public/` (Vite serves that directory's contents as-is
+  from the root path) and there was no existing precedent in this repo
+  for importing a `public/` asset as a module.
+
+  Key Files Modified:
+    src/app/AppHeader.tsx — logo <img> next to the "Reson8" heading
+
+  Verification:
+    `npm run typecheck` (clean), `npm run lint` (clean — 0 errors, 1
+    pre-existing unrelated warning), `npm run test` (33/33 passing, 5
+    test files, unchanged). Started the dev server and confirmed
+    `/favicon.svg` serves correctly (200) at the path the new `<img>`
+    references. Did **not** visually confirm the logo rendering inside
+    an actual connected app view (`AppHeader` only renders once
+    connected to a `reson8` server, and no live server was reachable in
+    this sandbox to connect through) — this is a single-line, low-risk
+    `<img>` addition next to existing text using an asset already
+    confirmed to load, but a visual spot-check against a real server is
+    still recommended before considering this fully verified.
+
+  Next Step: IR9 — allow browsing existing files (not just the camera)
+  from the mobile chat attachment picker.
+
+=== Version bumped to 7.6.0 (18/08/2026) — classification: MINOR ===
