@@ -4108,3 +4108,5 @@ Feature/Fix: Phase 7 — P7.7: real-device results, Android tablet + iPad
   capabilities shipped throughout: installability, service-worker update
   flow, "What's New" modal, Badging/Vibration lifecycle) — see the
   version-bump marker immediately following this entry.
+
+=== Version bumped to 7.0.0 (18/08/2026) — classification: MAJOR ===
