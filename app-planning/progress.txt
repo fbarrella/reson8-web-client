@@ -4345,3 +4345,41 @@ images, not `:name:` text
   character icons with lucide-react's Smile icon.
 
 === Version bumped to 7.3.0 (18/08/2026) — classification: MINOR ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — IR4: smiley-face icon for the
+reaction/emoji-picker buttons
+
+  Problem: Two different, both-wrong icons were used for "open the
+  emoji picker": the message "add a reaction" button used a `Plus`
+  (`+`) icon, an odd symbol for "react with an emoji"; the composer's
+  "insert emoji" button used a literal `🙂` unicode character as its
+  content, which risks reading as "click to send this exact emoji"
+  rather than "open a picker."
+
+  Solution: The desktop client's equivalent button
+  (`../reson8/apps/client/src/renderer/index.html`, `#btn-emoji`) uses
+  an inline SVG (circle + smile-mouth path + two eye dots,
+  `viewBox="0 0 24 24"`) that is, stroke-for-stroke, lucide-react's
+  built-in `Smile` icon — already a project dependency, no new asset
+  needed. Replaced `Plus` with `Smile` in `ReactionsRow.tsx`'s "add
+  reaction" button, and replaced the literal `🙂` character with
+  `<Smile className="size-5" />` in `Composer.tsx`'s "insert emoji"
+  button (matching the sizing convention of its sibling `Paperclip`/
+  `Send` icon buttons). Both buttons now render the same icon.
+
+  Key Files Modified:
+    src/features/chat/ReactionsRow.tsx — Plus -> Smile
+    src/features/chat/Composer.tsx — raw 🙂 character -> Smile icon
+
+  Verification:
+    `npm run typecheck` (clean), `npm run lint` (clean — 0 errors, 1
+    pre-existing unrelated warning), `npm run test` (33/33 passing, 5
+    test files, unchanged). Not manually exercised in a browser against
+    a live server this session.
+
+  Next Step: IR5 — suppress the "user joined your channel" sound firing
+  for the local user's own voice-channel join.
+
+=== Version bumped to 7.3.1 (18/08/2026) — classification: PATCH ===

@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { Smile } from "lucide-react";
 
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useCustomEmojiStore } from "@/stores/customEmojiStore";
@@ -66,7 +66,7 @@ export function ReactionsRow({
             aria-label="Add reaction"
             className="flex size-6 items-center justify-center rounded-full border border-dashed border-border text-muted-foreground opacity-70 hover:bg-accent hover:opacity-100"
           >
-            <Plus className="size-3.5" />
+            <Smile className="size-3.5" />
           </button>
         }
       />
