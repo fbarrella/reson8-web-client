@@ -3898,3 +3898,114 @@ Feature/Fix: Phase 7 — P7.7: Cross-device/cross-browser testing matrix
 
   Next Step: P7.8 — Deployment (hosting decision, HTTPS/WSS documentation,
   CSP configuration).
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Phase 7 — P7.8: Deployment (hosting decision, HTTPS/WSS,
+CSP configuration)
+
+  Problem: This phase item is "decide and document," not build a feature —
+  master PRD §5.6 explicitly defers CSP configuration to this exact task,
+  and the phase PRD asks for a static-host-vs-Docker decision plus written
+  HTTPS/WSS/CSP guidance, accounting for the fact that this client has no
+  backend of its own and connects to a variable, user-supplied server
+  origin at runtime.
+
+  Solution: Read `../reson8`'s actual deployment shape first rather than
+  guessing — its `docker-compose.yml` runs the server on plain HTTP/WS
+  (port 9800, no self-terminated TLS), and `docker-compose.cloudflared.yml`
+  is that repo's own established pattern for optional add-on services via
+  a compose override, plus its documented way of putting TLS in front of
+  the server (Cloudflare Tunnel). Both facts shaped this client's own
+  deployment story rather than inventing a different convention.
+
+  **Decision**: static-host + CDN as the recommended default (Netlify/
+  Vercel/Cloudflare Pages/plain nginx — this app has nothing to run
+  server-side, matching the PRD's own framing), with a working Docker
+  option documented alongside it for self-hosters who want the web client
+  running next to their `reson8` server, using the same compose-override
+  pattern that repo already established. Wrote `DEPLOYMENT.md` covering
+  both, plus a `Dockerfile` (multi-stage: `node:22-bookworm-slim` build →
+  `nginx:1.27-alpine` runtime) and `nginx.conf` for the Docker path — the
+  same nginx config also serves as the concrete reference for what a
+  static-host operator needs to replicate via their own host's custom-
+  headers mechanism (Netlify `_headers`, Vercel `vercel.json`, etc.).
+
+  Real nginx bug caught and fixed before considering this done: initially
+  set the CSP/security headers once at the server block level, then added
+  per-location `Cache-Control` overrides for hashed assets vs. `sw.js`/
+  `manifest.webmanifest`/`index.html` (each needing different caching
+  rules). nginx's `add_header` inheritance is not additive — a location
+  block that defines *any* `add_header` of its own silently drops every
+  server-level `add_header` for that location, rather than merging with
+  them. That would have meant the CSP never actually reached `index.html`
+  (the one response it matters most for) or any static asset response —
+  only the un-touched default `location /` block would have gotten it.
+  Fixed by defining the CSP string once via `set $csp` (which *does*
+  inherit normally into locations) and repeating the four `add_header`
+  calls explicitly in every location block that sets its own
+  Cache-Control, with a comment explaining why the repetition is
+  necessary rather than looking like copy-paste oversight.
+
+  **HTTPS**: documented as mandatory (getUserMedia/service-worker/Badging-
+  API secure-context restrictions, `localhost`'s dev-only exception) — no
+  code change needed, this is pure documentation of an existing browser-
+  level constraint.
+
+  **WSS**: confirmed `src/lib/serverUrl.ts`'s existing `normalizeServerUrl()`
+  already defaults correctly (prepends `wss://` unless the host is
+  clearly local) — no code change needed here either, just documented the
+  existing correct behavior and the practical backstop (a browser blocks
+  mixed active content regardless, once this app itself is served over
+  HTTPS).
+
+  **CSP tradeoff**: per master PRD §5.6's explicit instruction not to ship
+  a silent wildcard, `DEPLOYMENT.md` spells out *why* `connect-src`/
+  `img-src` allow any host over `https:`/`wss:` rather than a single
+  origin (this app's entire purpose is connecting to whatever server the
+  user types in) and what that does and doesn't protect against (still
+  blocks plain-HTTP downgrade and `javascript:`/`data:`-scheme injection;
+  does not and cannot protect a user who deliberately connects to a
+  malicious server of their own choosing from that server's own responses
+  — inherent to the app's trust model, not a CSP gap).
+
+  Edge Cases Handled:
+    `style-src 'unsafe-inline'` is required specifically because Radix
+    UI's popper positioning sets inline `style` attributes on floating
+    content (popovers/dropdowns) — documented as the actual reason rather
+    than a blanket "just in case" allowance, so a future session doesn't
+    mistake it for laziness and remove it.
+
+  Key Files Modified:
+    DEPLOYMENT.md (NEW) — full hosting decision + HTTPS/WSS/CSP writeup
+    Dockerfile (NEW)
+    nginx.conf (NEW)
+    .dockerignore (NEW)
+
+  Verification:
+    npm run typecheck / lint / test (33/33) / build / check:bundle-size
+    (132.5KB gzip, unchanged) all pass — confirmed `dist/`'s actual output
+    shape (`assets/`, `index.html`, `sw.js`, `manifest.webmanifest` all at
+    the root) matches exactly what `nginx.conf`'s location blocks expect.
+
+    **Not verified**: the Docker image itself was never actually built —
+    no Docker daemon exists in this sandbox at all. Separately, and worth
+    recording for any future session doing similar work here: `npm ci`
+    (the exact command the Dockerfile's build stage runs) reliably fails
+    in this specific proot sandbox with `ENOENT`/rename errors against
+    both the existing npm cache and a freshly-created one, while plain
+    `npm install` against the identical `package-lock.json` succeeds
+    cleanly every time — this reproduced consistently enough (four
+    attempts, two different cache directories) to be confident it's a
+    proot/ptrace-layer filesystem limitation specific to `npm ci`'s more
+    aggressive parallel extraction, not a real problem with this
+    repository's lockfile or the Dockerfile's correctness. A real Docker
+    build (standard Linux container, no ptrace interception) would not
+    have this specific limitation, but this is still a genuine, not-fully-
+    closed verification gap on the one thing that would most concretely
+    prove the Docker path works — flag this explicitly if picking this
+    back up rather than assuming the untested Dockerfile is proven.
+
+  Next Step: P7.9 — Project documentation (README.md/CLAUDE.md rewrite for
+  future contributors, now genuinely due — README.md's "Status: Phase 1
+  complete" line has been stale since roughly Phase 2).
