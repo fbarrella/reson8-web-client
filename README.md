@@ -1,6 +1,6 @@
 # Reson8 Web Client
 
-[![Version](https://img.shields.io/badge/version-7.3.1-blue.svg)](#)
+[![Version](https://img.shields.io/badge/version-7.4.0-blue.svg)](#)
 
 A mobile-first, fully responsive Progressive Web App client for [Reson8](../reson8) — a self-hosted voice & text communication server (TeamSpeak-3-style: hierarchical channel tree, SFU voice via mediasoup, persistent text chat, DMs, moderation). Built with React, TypeScript, and Vite. This is an independent client for the existing `reson8` server; it does not modify the server, its database, or its Socket.io protocol.
 

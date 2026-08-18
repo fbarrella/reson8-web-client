@@ -4383,3 +4383,51 @@ reaction/emoji-picker buttons
   for the local user's own voice-channel join.
 
 === Version bumped to 7.3.1 (18/08/2026) — classification: PATCH ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — IR5: suppress the self "user joined
+your channel" sound duplication on voice join
+
+  Problem: Joining a voice channel played two sounds simultaneously:
+  `joining-channel` (correct) and `user_joined_channel` (wrong — that
+  cue is meant for *other* occupants joining a channel you're already
+  in, not for your own join).
+
+  Solution: `joinVoiceChannel()` resets `previousOccupantIds` to an
+  empty `Set` before the join completes, then plays `joining-channel`
+  once it succeeds. The very next `PRESENCE_UPDATE` for that channel —
+  which includes yourself, since you just joined — is diffed by
+  `handlePresenceUpdateForVoice()` against that now-empty baseline, so
+  your own `userId` reads as a "new" occupant and
+  `soundAlert.play("user_joined_channel")` fires for yourself on top of
+  the alert that already correctly announced your own join.
+
+  Excluded the local user's own `userId` (read via
+  `useConnectionStore.getState().selfUserId`) from the join/leave
+  diffing in `handlePresenceUpdateForVoice()` — `hadJoins` and
+  `departedIds` now both skip `selfUserId`, so `user_joined_channel` /
+  `user_disconnected_from_channel` only ever reflect *other* occupants'
+  presence changes, never the local user's own transitions (which
+  already have dedicated sounds at their own call sites).
+
+  Key Files Modified:
+    src/services/voiceConnectionService.ts — selfUserId exclusion in
+      handlePresenceUpdateForVoice's join/leave diffing
+
+  Verification:
+    `npm run typecheck` (clean), `npm run lint` (clean — 0 errors, 1
+    pre-existing unrelated warning), `npm run test` (33/33 passing, 5
+    test files, unchanged — no existing test covers this function).
+    Not manually exercised against a live server this session —
+    recommend verifying both that (a) joining a channel with existing
+    occupants no longer doubles up your own join sound, and (b) a
+    second real user joining a channel you're already in still
+    correctly plays `user_joined_channel` (the exclusion must not
+    accidentally suppress real other-user join sounds).
+
+  Next Step: IR6+IR7 — fix disconnect/leave-voice sound routing (both
+  share the same root cause in leaveVoiceChannel()'s unconditional
+  "leaving-channel" play).
+
+=== Version bumped to 7.4.0 (18/08/2026) — classification: MINOR ===
