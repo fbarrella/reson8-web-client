@@ -1,7 +1,7 @@
 {
   "name": "reson8-web-client",
   "private": true,
-  "version": "7.7.1",
+  "version": "7.8.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

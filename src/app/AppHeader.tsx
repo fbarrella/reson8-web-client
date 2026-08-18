@@ -32,7 +32,7 @@ export function AppHeader() {
       </Button>
 
       <div className="flex items-center gap-2">
-        <img src="/favicon.svg" alt="" aria-hidden="true" className="size-6" />
+        <img src="/icons/icon-64.png" alt="" aria-hidden="true" className="size-6" />
         <h1 className="text-sm font-semibold text-foreground">Reson8</h1>
       </div>
 
