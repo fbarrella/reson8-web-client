@@ -4547,3 +4547,44 @@ bar
   from the mobile chat attachment picker.
 
 === Version bumped to 7.6.0 (18/08/2026) — classification: MINOR ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — IR9: mobile attachment picker allows
+browsing existing files, not just the camera
+
+  Problem: On phone/tablet, tapping the attach-file button in chat
+  opened the camera directly, with no way to pick an existing photo/
+  file from the device.
+
+  Solution: `Composer.tsx`'s file input had `capture="environment"` on
+  it, which is what forces mobile browsers to launch the camera
+  directly instead of presenting the native "Camera / Photo Library /
+  Files" chooser. Removed the attribute entirely — `accept="image/
+  jpeg,image/png,image/gif,image/webp"` alone is sufficient; mobile
+  browsers present their native picker (which still offers "take
+  photo" as one option, alongside browsing the gallery/files) once
+  `capture` is absent. One-attribute removal; no new UI/second button
+  needed, since the existing single attach button already covers both
+  use cases now. Desktop behavior is unaffected (desktop browsers
+  already ignore `capture`; the `accept` MIME filter still applies),
+  and upload validation / instant-thumbnail feedback are untouched —
+  this only changes which native picker UI opens.
+
+  Key Files Modified:
+    src/features/chat/Composer.tsx — removed capture="environment"
+      from the file input
+
+  Verification:
+    `npm run typecheck` (clean), `npm run lint` (clean — 0 errors, 1
+    pre-existing unrelated warning), `npm run test` (33/33 passing, 5
+    test files, unchanged). Not manually exercised on an actual mobile
+    device/browser this session — recommend confirming the native
+    chooser now offers "browse files/photos" (not just the camera) on
+    a real phone or tablet before considering this fully verified.
+
+  Next Step: IR10 (final item) — rework README.md for new users/
+  contributors, with stack/status shields and the app logo in the
+  title; update planning-doc links for the archive.
+
+=== Version bumped to 7.7.0 (18/08/2026) — classification: MINOR ===

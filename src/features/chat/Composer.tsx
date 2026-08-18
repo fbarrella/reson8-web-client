@@ -147,7 +147,7 @@ export function Composer({
       )}
 
       <div className="flex items-end gap-1.5">
-        <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/gif,image/webp" capture="environment" hidden onChange={handleFileChange} />
+        <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/gif,image/webp" hidden onChange={handleFileChange} />
         <Button
           type="button"
           variant="ghost"
