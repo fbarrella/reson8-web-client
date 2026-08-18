@@ -25,9 +25,6 @@ const InstallPrompt = lazy(() =>
 // mediasoup-client, and dnd-kit out of the initial connect-screen bundle.
 // A user who hasn't connected yet never needs any of this JS.
 const AppShell = lazy(() => import("@/app/AppShell").then((m) => ({ default: m.AppShell })));
-const PlaceholderPane = lazy(() =>
-  import("@/app/PlaceholderPane").then((m) => ({ default: m.PlaceholderPane })),
-);
 const ChannelsPage = lazy(() =>
   import("@/features/channels/ChannelsPage").then((m) => ({ default: m.ChannelsPage })),
 );
@@ -39,6 +36,15 @@ const DmsListPage = lazy(() =>
   import("@/features/dm/DmsListPage").then((m) => ({ default: m.DmsListPage })),
 );
 const DmRoute = lazy(() => import("@/features/dm/DmRoute").then((m) => ({ default: m.DmRoute })));
+// The bottom tab bar's "Voice" destination — previously left as unmodified
+// Phase 1 scaffolding (a literal `PlaceholderPane`) even though `VoicePanel`
+// has been fully built since Phase 2 and is already used identically in two
+// other places (AppShell's lg persistent pane, and the mobile mini-bar's
+// expanded sheet) per this app's "one component set, three compositions"
+// pattern — this route is simply that pattern's fourth composition.
+const VoicePanel = lazy(() =>
+  import("@/features/voice/VoicePanel").then((m) => ({ default: m.VoicePanel })),
+);
 
 interface AppProps {
   hadExistingInstanceId: boolean;
@@ -124,7 +130,7 @@ export default function App({ hadExistingInstanceId }: AppProps) {
               path="voice"
               element={
                 <Suspense fallback={null}>
-                  <PlaceholderPane title="Voice" phase="Phase 2" />
+                  <VoicePanel />
                 </Suspense>
               }
             />

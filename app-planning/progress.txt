@@ -3610,3 +3610,160 @@ bundle-size budget)
     so far — deferred to P7.7.
 
   Next Step: P7.7 — Cross-device/cross-browser testing matrix.
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Out-of-band bug fixes ahead of P7.7 — channel-tree listener
+race, false-positive "Insufficient Permissions" alert, and a forgotten
+Voice tab route
+
+  Problem: The user reported two real-device bugs against a live `reson8`
+  server (not this sandbox's mock server) severe enough to warrant fixing
+  before continuing to P7.7's device-testing pass:
+    1. The Channels tab frequently showed no channels at all on a fresh
+       connect for non-admin users, paired with an "Insufficient
+       Permissions" toast + sound firing unprompted — intermittent, and it
+       "fixed itself" once after repeated reloads/backgrounding the mobile
+       Chrome app, then wouldn't reproduce reliably again.
+    2. The bottom-tab "Voice" destination still showed "Coming in Phase 2"
+       even though voice has been fully functional since that phase.
+
+  Solution:
+
+  **Bug 1a — channel tree silently empty (root cause: a listener-
+  registration race, confirmed against both this repo and
+  `../reson8/apps/server`'s actual source):**
+  `connectionService.ts`'s `connectToServer()` only called
+  `attachLifecycleListeners()` — which is where `socket.on("CHANNEL_TREE_
+  UPDATE", ...)` gets registered — *inside* the `USER_JOIN_SERVER` ack's
+  `.then()` callback, i.e. strictly after the ack had already arrived. The
+  real server's `USER_JOIN_SERVER` handler
+  (`../reson8/apps/server/src/handlers/connection.handler.ts:286-288`)
+  sends `CHANNEL_TREE_UPDATE` and *then* the ack, as two separate packets
+  over the same connection, in that fixed order. On this repo's own mock
+  server (which had always acked first, then emitted the tree — the
+  opposite, "safe" order) this race could never surface, which is exactly
+  why 7 phases of live-Playwright verification against it never caught it.
+  On a real network the two packets can be processed close enough together
+  that the tree event dispatches to zero listeners (registration hadn't
+  run yet) and is dropped for good — `channelTreeStore` has no merge/retry
+  logic, so it just stays empty until some unrelated later broadcast
+  happens to repopulate it, matching the user's exact "fixed itself once,
+  then wouldn't reproduce" description.
+
+  Fixed by moving `attachLifecycleListeners()` to run *before*
+  `socketService.joinServer()` is even called (immediately in `onConnect`,
+  right after the socket connects) — every lifecycle listener, not just
+  the tree one, is now live before any server response can possibly
+  arrive, regardless of packet timing. Added `cleanupLifecycle?.()` to the
+  join-failure branch too, since listeners are now attached before we know
+  whether the join actually succeeds (previously not needed, since
+  attachment only ever happened after success).
+
+  **Bug 1b — false-positive "Insufficient Permissions" toast + sound
+  (root cause found by reading `../reson8/apps/server`'s actual
+  `requirePermission` middleware, per the user's specific request):**
+  `permissions.middleware.ts`'s `requirePermission()` — confirmed as the
+  *only* place this server ever emits the broadcast `ERROR` event, across
+  every handler that uses it (channel/admin/message/moderation/emoji/
+  nudge) — unconditionally fires `socket.emit("ERROR", {code:
+  "PERMISSION_DENIED", ...})` on every denial, *in addition to*, never
+  instead of, failing that same call's own ack. Every real user-initiated
+  blocked action in this client already surfaces its own toast from that
+  ack failure via `reportAckError()` (channelService/adminService/
+  chatService/emojiService/dmService all call it) — so the broadcast
+  `ERROR` event is provably 100% redundant information in every legitimate
+  case. Worse: `permissionsService.ts`'s `refreshPermissions()` runs
+  automatically on *every* connect (there's no dedicated "what are my own
+  permissions" event — Phase 3's own documented workaround is to call
+  `GET_ALL_USERS`, itself gated behind `MANAGE_ROLES`, and self-identify by
+  nickname match) and deliberately, silently treats its own denial as "no
+  elevated permissions" — a normal, expected outcome for any non-admin,
+  with no toast of its own. But the server still fires the broadcast
+  `ERROR` for that exact denial regardless, and `connectionService.ts`'s
+  global `handleError` played the `insufficient_perms` sound + a toast for
+  *any* permission-shaped broadcast `ERROR` unconditionally — meaning every
+  single non-`MANAGE_ROLES` user got this alert on every single connect,
+  for an action they never took.
+
+  Fixed by making `handleError` skip the toast entirely for `PERMISSION_
+  DENIED`/`NOT_AUTHENTICATED`-shaped broadcast errors (still shown for any
+  other/unexpected error code, so genuine server problems still surface).
+  This required going back to `../reson8/apps/server` specifically — the
+  client repo alone couldn't prove the broadcast and the ack-based paths
+  were unconditionally paired, only that they *could* be; reading the
+  actual `requirePermission` call sites is what turned "plausible theory"
+  into "confirmed, every single call site does this."
+
+  **Bug 2 — Voice tab (confirmed forgotten wiring, not a UI bug):**
+  `App.tsx` still routed `/app/voice` to a literal, unmodified Phase 1
+  `PlaceholderPane` stub. `VoicePanel` (occupant list, mute/deafen/leave,
+  PTT, mic level meter) has been fully built and working since Phase 2,
+  and is already used identically in two other places
+  (`AppShell.tsx`'s `lg` persistent `<aside>` pane, and the mobile
+  `VoiceMiniBar`-triggered full-screen sheet) per this app's own "one
+  component set, three compositions" pattern (P2.11) — the bottom tab's
+  "Voice" destination was simply never updated to be that pattern's fourth
+  composition. Fixed by routing `/app/voice` to `<VoicePanel/>` directly
+  (lazy-loaded, consistent with every other P7.6 route split). Deleted
+  `src/app/PlaceholderPane.tsx` entirely — once this was its only caller,
+  it became genuinely dead code (grepped to confirm no other reference).
+
+  Edge Cases Handled:
+    Join failure after early listener attachment (Bug 1a's fix) now
+    explicitly tears down `cleanupLifecycle` before disconnecting, so a
+    failed join (bad password, banned, etc.) doesn't leak the
+    `visibilitychange` DOM listener `attachLifecycleListeners` also
+    registers (that one isn't cleaned up by the socket's own disconnect,
+    unlike the socket event listeners).
+
+  Mock Server Changes (scratch, not committed — see CLAUDE.md's mock-
+  server section):
+    Fixed two divergences from the real server's actual behavior that are
+    exactly why neither bug ever surfaced in 7 phases of this session's own
+    live-Playwright verification against it: `USER_JOIN_SERVER` now emits
+    `CHANNEL_TREE_UPDATE` *before* the ack (previously acked first);
+    `requireFlag()` now also emits the broadcast `ERROR` event on denial,
+    matching `requirePermission()` exactly (previously only failed the
+    ack). Both changes are copied forward in the running mock server
+    instance for this session; whoever picks this mock server up next
+    should carry these fixes forward too rather than reverting to the
+    old, inaccurate ordering.
+
+  Key Files Modified:
+    src/services/connectionService.ts — attachLifecycleListeners() moved
+      before joinServer(), cleanup added to the failure path,
+      handleError() no longer toasts/sounds for permission-shaped
+      broadcast ERROR events
+    src/App.tsx — /app/voice now renders VoicePanel (lazy), PlaceholderPane
+      import removed
+    src/app/PlaceholderPane.tsx (DELETED) — no longer referenced anywhere
+
+  Verification:
+    npm run typecheck / lint / test (33/33) / build / check:bundle-size
+    (132.5KB gzip, unchanged) all pass.
+
+    Live Playwright verification against the corrected mock server (see
+    above): connecting as a non-admin user now shows all 3 channels
+    immediately despite the exact adverse emit-then-ack ordering that
+    exposed the race, and produces zero permission-related toasts despite
+    the automatic `refreshPermissions()` call being denied server-side
+    exactly as before (confirmed the denial still happens — the broadcast
+    `ERROR` still fires — it's just no longer surfaced to the user).
+    Screenshotted the Voice tab in both the not-joined ("Not in a voice
+    channel.") and joined (session timer, occupant list, mute/deafen/leave
+    controls) states — matches the same component's appearance in its two
+    other existing usages exactly, as expected. Re-ran the full P7.5
+    33-surface axe-core audit afterward — still 33/33 clean, no
+    accessibility regression from any of the three fixes.
+
+    Not verified: the exact real-device intermittency the user described
+    (this was reproduced via corrected *mock*-server packet ordering, not
+    the actual reported device/network — the root-cause analysis is against
+    real server source code, which is the strongest verification available
+    without that specific device in hand; full real-device confirmation is
+    P7.7's job).
+
+  Next Step: Resume Phase 7 at P7.7 — Cross-device/cross-browser testing
+  matrix (a real-device pass against these three fixes specifically, not
+  just the general matrix, would be the most valuable place to start).

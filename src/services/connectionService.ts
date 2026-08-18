@@ -251,11 +251,26 @@ function attachLifecycleListeners(socket: ResonSocket, joinParams: ConnectParams
   const handleUserBanned: ServerToClientEvents["USER_BANNED"] = () => {
     useConnectionStore.getState().setError("You have been banned from this server.");
   };
+  // The server's `requirePermission` middleware (confirmed against
+  // ../reson8/apps/server/src/middleware/permissions.middleware.ts — the
+  // *only* place this app's server ever emits ERROR) always fires this
+  // broadcast in addition to, never instead of, failing the ack of
+  // whichever specific event triggered it. Every real user-initiated
+  // blocked action already surfaces its own toast via `reportAckError` at
+  // the call site that made that ack (channelService/adminService/
+  // chatService/emojiService/dmService), so toasting this broadcast too
+  // would just double the same message. Worse, `refreshPermissions()` runs
+  // automatically on every connect and deliberately treats its own
+  // GET_ALL_USERS ack failure as "no elevated permissions" — a normal,
+  // silent outcome for any non-admin — but the server still fires this
+  // broadcast for that exact denial, which used to reflexively play the
+  // insufficient_perms sound + toast for every ordinary member on every
+  // connect, regardless of whether they'd tried to do anything at all.
   const handleError: ServerToClientEvents["ERROR"] = (payload) => {
-    toast({ title: "Server error", description: payload.message, variant: "destructive" });
     if (isPermissionDeniedMessage(payload.code) || isPermissionDeniedMessage(payload.message)) {
-      soundAlert.play("insufficient_perms");
+      return;
     }
+    toast({ title: "Server error", description: payload.message, variant: "destructive" });
   };
   const handleDisconnect = (reason: string) => {
     if (reason === "io client disconnect") return;
@@ -415,17 +430,29 @@ export function connectToServer(params: ConnectParams): Promise<ConnectResult> {
 
     const onConnect = () => {
       socket.off("connect_error", onConnectError);
+      // Attach every lifecycle listener (including CHANNEL_TREE_UPDATE)
+      // BEFORE sending USER_JOIN_SERVER, not after its ack resolves. The
+      // server sends CHANNEL_TREE_UPDATE and then the join ack as two
+      // separate packets over the same connection — on a real network
+      // (unlike this repo's own always-fast local mock server) the tree
+      // event can be dispatched before the ack promise's `.then()` callback
+      // even runs, and with no listener attached yet it was silently
+      // dropped: the channel tree stayed permanently empty for that
+      // session. Attaching first means no server-emitted event, for this
+      // one or any other, can ever be missed regardless of packet timing.
+      cleanupLifecycle = attachLifecycleListeners(socket, params);
       void socketService
         .joinServer({ nickname, instanceId, password: password || undefined })
         .then((ack) => {
           if (!ack.success) {
             const message = resolveJoinErrorMessage(ack.error, password);
             useConnectionStore.getState().setError(message);
+            cleanupLifecycle?.();
+            cleanupLifecycle = null;
             socketService.disconnect();
             resolve({ success: false, error: message });
             return;
           }
-          cleanupLifecycle = attachLifecycleListeners(socket, params);
           useConnectionStore.getState().setConnected(ack.serverId ?? "", nickname, serverUrl);
           soundAlert.play("connected");
           void refreshPermissions();
