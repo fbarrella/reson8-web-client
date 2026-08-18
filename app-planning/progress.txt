@@ -4431,3 +4431,74 @@ your channel" sound duplication on voice join
   "leaving-channel" play).
 
 === Version bumped to 7.4.0 (18/08/2026) — classification: MINOR ===
+
+--- Entry: 18/08/2026 ---
+
+Feature/Fix: Improvements Round — IR6+IR7: fix disconnect/leave-voice
+sound routing
+
+  Problem: Two related sound-routing bugs, both traced to the same
+  function: (IR6) Settings -> Application -> "Disconnect" played
+  `leaving-channel` instead of a sound that actually communicated "you
+  disconnected." (IR7) Explicitly leaving a voice channel (voice panel,
+  mini-bar, or the disconnect-voice keyboard shortcut) was supposed to
+  play `leaving-channel` but was unreliable.
+
+  Solution: `voiceConnectionService.leaveVoiceChannel()` called
+  `soundAlert.play("leaving-channel")` unconditionally at its end — with
+  no check on whether `currentChannelId` was even set — unlike the
+  `socketService.leaveChannel(currentChannelId)` call three lines above
+  it, which correctly only fires `if (isConnected() && currentChannelId)`.
+  `connectionService.leaveServer()` (the Settings-Disconnect handler)
+  unconditionally calls `leaveVoiceChannel()` as its first cleanup step,
+  regardless of whether the user was ever in a voice channel to begin
+  with — so every disconnect played `leaving-channel`, and `leaveServer()`
+  never played anything of its own to signal the actual disconnect (the
+  existing `disconnected` sound asset was only wired to the *unexpected*
+  transport-loss path, a different, confusingly similarly-named handler).
+
+  Gave `leaveVoiceChannel()` a `silent` parameter (default `false`) and
+  guarded the `leaving-channel` play behind both `!silent` and the same
+  `currentChannelId` truthiness already guarding the socket leave-channel
+  emit — so the sound only ever fires for a real voice-channel leave now,
+  never as an unconditional side effect. `leaveServer()` now calls
+  `leaveVoiceChannel(true)` (silent cleanup) and plays `disconnected`
+  itself, exactly once, regardless of prior voice state — fixing IR6.
+  The real explicit-leave call sites (`VoicePanel.tsx`, `VoiceMiniBar.tsx`,
+  `voiceShortcutService.ts`'s disconnect-voice shortcut) all still call
+  `leaveVoiceChannel()` with no `silent` argument, so they reliably hear
+  the sound now that it's gated correctly instead of competing with
+  unrelated cleanup paths — the working theory for IR7 (per the PRD's own
+  "needs investigation" flag on this item).
+
+  Two call sites needed a small follow-up fix: `VoicePanel.tsx` and
+  `VoiceMiniBar.tsx` had wired `onClick={leaveVoiceChannel}` directly,
+  which — now that the function takes an optional `silent: boolean`
+  parameter — would receive the click's `MouseEvent` as that argument.
+  Changed both to `onClick={() => leaveVoiceChannel()}`.
+
+  Key Files Modified:
+    src/services/voiceConnectionService.ts — `silent` param, guarded
+      sound play
+    src/services/connectionService.ts — leaveServer() calls
+      leaveVoiceChannel(true) and plays "disconnected" itself
+    src/features/voice/VoicePanel.tsx — onClick wrapped in a no-arg arrow
+    src/features/voice/VoiceMiniBar.tsx — onClick wrapped in a no-arg
+      arrow
+
+  Verification:
+    `npm run typecheck` (clean — the onClick type errors described above
+    were caught and fixed by this check), `npm run lint` (clean — 0
+    errors, 1 pre-existing unrelated warning), `npm run test` (33/33
+    passing, 5 test files, unchanged). Not manually exercised against a
+    live server this session — per the PRD's own note on IR7, if the
+    leave-voice sound still doesn't play reliably after this guard fix in
+    real use, treat it as a second, distinct bug (e.g. check the
+    SoundAlertService's gesture-unlock state at the moment the leave
+    button is pressed) rather than assuming this fix is a complete
+    resolution until manually verified.
+
+  Next Step: IR8 — add the Reson8 logo to the top bar, next to the app
+  name.
+
+=== Version bumped to 7.5.0 (18/08/2026) — classification: MINOR ===

@@ -75,7 +75,7 @@ export function VoiceMiniBar() {
       >
         {isDeafened ? <VolumeX className="size-5" /> : <Volume2 className="size-5" />}
       </Button>
-      <Button type="button" variant="ghost" size="icon" aria-label="Leave voice" onClick={leaveVoiceChannel}>
+      <Button type="button" variant="ghost" size="icon" aria-label="Leave voice" onClick={() => leaveVoiceChannel()}>
         <PhoneOff className="size-5" />
       </Button>
     </div>

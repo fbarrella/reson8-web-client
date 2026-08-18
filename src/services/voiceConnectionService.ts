@@ -147,8 +147,23 @@ export async function joinVoiceChannel(channelId: string): Promise<JoinVoiceResu
   }
 }
 
-/** Explicit leave — clears lastVoiceChannelId so no reconnect auto-rejoins. */
-export function leaveVoiceChannel(): void {
+/**
+ * Explicit leave — clears lastVoiceChannelId so no reconnect auto-rejoins.
+ *
+ * `silent` (Improvements Round IR6/IR7): pass `true` when this is being
+ * called as a cleanup side-effect of a full server disconnect
+ * (`connectionService.leaveServer()`), not as the user explicitly leaving
+ * a voice channel — that flow plays its own `disconnected` sound instead.
+ * Previously this always played `leaving-channel` unconditionally, even
+ * when there was no `currentChannelId` to leave (i.e. the user wasn't in
+ * voice at all), which is why disconnecting from Settings played
+ * `leaving-channel` regardless of voice state instead of a sound that
+ * actually communicated "you disconnected." The sound is now guarded by
+ * the same `currentChannelId` truthiness already used for the socket
+ * leave-channel emit, so it only ever fires for a real voice-channel
+ * leave, from the real explicit-leave call sites.
+ */
+export function leaveVoiceChannel(silent = false): void {
   const { currentChannelId } = useVoiceStore.getState();
   useVoiceStore.getState().setStatus("leaving");
 
@@ -159,7 +174,7 @@ export function leaveVoiceChannel(): void {
   voiceService = null;
   previousOccupantIds = new Set();
   useVoiceStore.getState().reset();
-  soundAlert.play("leaving-channel");
+  if (!silent && currentChannelId) soundAlert.play("leaving-channel");
 }
 
 /**

@@ -146,7 +146,7 @@ export function VoicePanel() {
           variant="destructive"
           size="icon"
           aria-label="Leave voice"
-          onClick={leaveVoiceChannel}
+          onClick={() => leaveVoiceChannel()}
         >
           <PhoneOff className="size-5" />
         </Button>
